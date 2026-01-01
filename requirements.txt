@@ -1,4 +1,4 @@
-chumpy==0.70
+# chumpy==0.70
 clip @ git+https://github.com/openai/CLIP.git@a1d071733d7111c9c014f024669f959182114e33
 easydict==1.11
 gym==0.26.2

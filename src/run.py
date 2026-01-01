@@ -38,7 +38,7 @@ def main(cfg: DictConfig) -> None:
     )
     cfg.output_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
 
-    if (not cfg.no_log) and (not cfg.run.test):
+    if (not cfg.no_log):
         group = cfg.get("group", cfg.learning.agent_name)
         wandb.init(
             project=cfg.project,
@@ -46,12 +46,10 @@ def main(cfg: DictConfig) -> None:
             resume=not cfg.resume_str is None,
             id=cfg.resume_str,
             notes=cfg.notes,
+            sync_tensorboard=True,
             config=OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False),
         )
         wandb.run.name = cfg.exp_name
-        wandb.run.save()
-
-        wandb.log({"config": OmegaConf.to_container(cfg, resolve=True)})
 
     dtype = torch.float32
     torch.set_default_dtype(dtype)
@@ -70,7 +68,7 @@ def main(cfg: DictConfig) -> None:
 
     # breakpoint()
     agent = agent_dict[cfg.learning.agent_name](
-        cfg, dtype, device, training=True, checkpoint_epoch=cfg.epoch
+        cfg, dtype, device, training=not cfg.run.test, checkpoint_epoch=cfg.epoch
     )
 
     if cfg.run.test:
@@ -83,6 +81,9 @@ def main(cfg: DictConfig) -> None:
         # breakpoint()
         agent.optimize_policy()
         print("training done!")
+
+    if not cfg.no_log:
+        wandb.finish()
 
 
 if __name__ == "__main__":

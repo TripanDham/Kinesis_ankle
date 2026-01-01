@@ -90,6 +90,7 @@ class AgentHumanoid(AgentPPO, ABC):
         Initialize basic variables required by the agent.
         """
         self.epoch = 0
+        self.num_steps = 0
 
     def print_config(self) -> None:
         """
@@ -246,7 +247,7 @@ class AgentHumanoid(AgentPPO, ABC):
         if epoch == -1:
             checkpoint_path = os.path.join(self.cfg.output_dir, "model.pth")
             if os.path.exists(checkpoint_path):
-                state = torch.load(checkpoint_path, map_location=self.device)
+                state = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
                 self.set_full_state_weights(state)
                 logger.info(f"Loaded latest checkpoint from {checkpoint_path}")
             else:
@@ -296,22 +297,23 @@ class AgentHumanoid(AgentPPO, ABC):
         logger.info(log_str)
 
         if not self.cfg.no_log:
-            wandb.log(
-                data={
-                    "avg_episode_reward": loggers.avg_episode_reward,
-                    "eps_len": loggers.avg_episode_len,
-                    "avg_rwd": loggers.avg_reward,
-                    "reward_raw": loggers.info_dict,
-                    "cpu_mem": cpu_mem,
-                    "gpu_mem": gpu_mem,
-                    "t_sample": info["T_sample"],
-                    "t_update": info["T_update"],
-                },
-                step=self.epoch,
-            )
+            data = {
+                "train/avg_episode_reward": loggers.avg_episode_reward,
+                "train/eps_len": loggers.avg_episode_len,
+                "train/avg_rwd": loggers.avg_reward,
+                "train/cpu_mem": cpu_mem,
+                "train/gpu_mem": gpu_mem,
+                "train/t_sample": info["T_sample"],
+                "train/t_update": info["T_update"],
+                "train/num_steps": self.num_steps,
+            }
+            for k, v in loggers.info_dict.items():
+                data[f"train/reward_{k}"] = v
 
             if "log_eval" in info:
-                wandb.log(data=info["log_eval"], step=self.epoch)
+                data.update(info["log_eval"])
+
+            wandb.log(data=data, step=self.epoch)
 
         return loggers
 
@@ -335,22 +337,22 @@ class AgentHumanoid(AgentPPO, ABC):
 
             self.epoch += 1
 
-            if save_model and (self.epoch) % self.cfg.learning.save_frequency == 0:
-                self.save_checkpoint()
-                # log_eval = self.eval_policy()
-                # info["log_eval"] = log_eval
-            elif (
-                save_model and (self.epoch) % self.cfg.learning.save_curr_frequency == 0
-            ):
-                self.save_curr()
             t2 = time.time()
-
             info = {
                 "loggers": loggers,
                 "T_sample": t1 - t0,
                 "T_update": t2 - t1,
                 "T_total": t2 - t0,
             }
+
+            if save_model and (self.epoch) % self.cfg.learning.save_frequency == 0:
+                self.save_checkpoint()
+                log_eval = self.eval_policy()
+                info["log_eval"] = log_eval
+            elif (
+                save_model and (self.epoch) % self.cfg.learning.save_curr_frequency == 0
+            ):
+                self.save_curr()
 
             loggers = self.log_train(info)
             eps_len_list.append(loggers.avg_episode_len)

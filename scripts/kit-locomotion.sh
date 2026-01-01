@@ -3,6 +3,7 @@
 # default values
 mode=test
 headless=False
+extra_args=()
 
 # parse arguments
 while [[ $# -gt 0 ]]; do
@@ -18,9 +19,8 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         *)
-            echo "Unknown argument: $1"
-            exit 1
-            ;;
+            extra_args+=("$1")
+            shift
     esac
 done
 
@@ -36,10 +36,12 @@ else
 fi
 
 # Run the script
-python src/run.py exp_name=kinesis-moe-imitation \
+python3 src/run.py exp_name=kinesis-moe-imitation \
     epoch=-1 \
     run=eval_run \
     run.headless=${headless} \
     run.motion_file=${motion_file} \
     run.initial_pose_file=${initial_pose_file} \
     env.termination_distance=0.5 \
+    "${extra_args[@]}"
+    no_log=True

@@ -13,7 +13,7 @@ import os
 import joblib
 import numpy as np
 from collections import OrderedDict
-from omegaconf import DictConfig
+from omegaconf import DictConfig, ListConfig
 from typing import Dict, Iterator, Optional, Tuple
 import scipy
 import torch
@@ -29,8 +29,10 @@ sys.path.append(str(path_root))
 from src.env.myolegs_task import MyoLegsTask
 import src.utils.np_transform_utils as npt_utils
 from src.utils.visual_capsule import add_visual_capsule
+from src.env.myolegs_env import get_actuator_names
 from easydict import EasyDict
 from src.KinesisCore.kinesis_core import KinesisCore
+from myosuite.envs.myo.fatigue import CumulativeFatigue
 
 import logging
 
@@ -71,6 +73,8 @@ class MyoLegsIm(MyoLegsTask):
 
         super().__init__(cfg)
         
+        self.initialize_muscle_condition()
+
         self.setup_motionlib()
         self.load_initial_pose_data()
         self.initialize_biomechanical_recording()
@@ -93,6 +97,10 @@ class MyoLegsIm(MyoLegsTask):
         self.num_traj_samples = 1  # cfg.env.get("num_traj_samples", 1) # parameter for number of future time steps
         self.reward_specs = cfg.env.reward_specs
         self.termination_distance = cfg.env.termination_distance
+        self.muscle_condition = cfg.env.get("muscle_condition", "")
+        self.fatigue_reset_random = cfg.env.get("fatigue_reset_random", False)
+        self.fatigue_reset_vec = cfg.env.get("fatigue_reset_vec", None)
+        self.knockout_muscles = cfg.env.get("knockout_muscles", None)
 
     def initialize_run_params(self, cfg: DictConfig) -> None:
         """
@@ -175,6 +183,39 @@ class MyoLegsIm(MyoLegsTask):
             self.muscle_forces = []
             self.muscle_controls = []
             self.policy_outputs = []
+
+    def initialize_muscle_condition(self):
+        """
+        Initializes muscle conditions like fatigue or sarcopenia based on config.
+        This logic is adapted from myosuite.envs.myo.base_v0.py.
+        """
+        self.frame_skip = 10
+        # for muscle fatigue we used the 3CC-r modelx
+        if self.muscle_condition == "fatigue":
+            self.muscle_fatigue = CumulativeFatigue(
+                self.mj_model, self.frame_skip, seed=None
+            )
+        elif self.muscle_condition == "sarcopenia":
+            # for muscle weakness we assume that a weaker muscle has a
+            # reduced maximum force
+            for mus_idx in range(self.mj_model.actuator_gainprm.shape[0]):
+                self.mj_model.actuator_gainprm[mus_idx, 2] = (
+                    0.5 * self.mj_model.actuator_gainprm[mus_idx, 2].copy()
+                )
+        elif self.muscle_condition == "knockout":
+            if self.knockout_muscles and isinstance(self.knockout_muscles, (list, ListConfig)):
+                for muscle_name in self.knockout_muscles:
+                    try:
+                        mus_idx = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_ACTUATOR, muscle_name)
+                        if mus_idx != -1:
+                            # Set the gain of the muscle to 0 to disable it
+                            self.mj_model.actuator_gainprm[mus_idx, 2] = 0.0
+                            logger.info(f"Muscle '{muscle_name}' has been knocked out.")
+                        else:
+                            logger.warning(f"Muscle '{muscle_name}' not found in model for knockout.")
+                    except Exception as e:
+                        logger.error(f"Error knocking out muscle '{muscle_name}': {e}")
+
 
     def create_task_visualization(self) -> None:
         """
@@ -317,7 +358,7 @@ class MyoLegsIm(MyoLegsTask):
             shape_params=self.gender_betas
             * min(self.num_motion_max, self.motion_lib.num_all_motions()),
             random_sample=self.random_sample,
-            start_idx=self.motion_start_idx,
+            start_idx=self.motion_start_idx
         )
 
     def forward_motions(self) -> Iterator[int]:
@@ -339,7 +380,7 @@ class MyoLegsIm(MyoLegsTask):
                 random_sample=self.random_sample,
                 silent=False,
                 start_idx=self.motion_start_idx,
-                specific_idxes=None,
+                specific_idxes=[9],
             )
             yield motion_start_idx
 
@@ -532,6 +573,15 @@ class MyoLegsIm(MyoLegsTask):
             self.frame_coverage = sim_time / self.motion_lib.get_motion_length(self._sampled_motion_ids)
         else:
             self.frame_coverage = 1.0
+
+        if self.muscle_condition == "fatigue":
+            logger.info("End of episode fatigue states (MF):")
+            all_actuator_names = get_actuator_names(self.mj_model)
+            muscle_act_ind = self.mj_model.actuator_dyntype == mujoco.mjtDyn.mjDYN_MUSCLE
+            muscle_names = [name for i, name in enumerate(all_actuator_names) if muscle_act_ind[i]]
+            fatigue_states = self.muscle_fatigue.MF
+            for name, fatigue in zip(muscle_names, fatigue_states):
+                logger.info(f"  {name}: {fatigue:.4f}")
 
     def reset_task(self, options: Optional[dict]=None) -> None:
         """
@@ -1009,6 +1059,13 @@ class MyoLegsIm(MyoLegsTask):
         """
         if self.recording_biomechanics:
             self.policy_outputs.append(action)
+
+        # Apply muscle fatigue if enabled
+        if self.muscle_condition == "fatigue":
+            muscle_act_ind = self.mj_model.actuator_dyntype == mujoco.mjtDyn.mjDYN_MUSCLE
+            action[muscle_act_ind], _, _ = self.muscle_fatigue.compute_act(
+                action[muscle_act_ind]
+            )
 
         self.physics_step(action)
         observation, reward, terminated, truncated, info = self.post_physics_step(action)

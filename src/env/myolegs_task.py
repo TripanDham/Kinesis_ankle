@@ -23,6 +23,12 @@ class MyoLegsTask(MyoLegsEnv):
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None) -> Tuple[dict, dict]:
         # First reset humanoid, then reset task, then reset the simulation.
         "Resets at MyoLegsTask level"
+        if hasattr(self, "muscle_condition") and self.muscle_condition == "fatigue":
+            self.muscle_fatigue.reset(
+                fatigue_reset_vec=self.fatigue_reset_vec,
+                fatigue_reset_random=self.fatigue_reset_random,
+            )
+
         self.reset_task(options=options)
         return super().reset(seed=seed, options=options)
 

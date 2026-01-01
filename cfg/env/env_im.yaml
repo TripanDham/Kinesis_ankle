@@ -22,3 +22,9 @@ reward_specs:
 #### Task Configs
 resampling_interval: 100
 termination_distance: 0.15
+
+# Muscle condition
+muscle_condition: "" # "fatigue", "sarcopenia", or "knockout"
+fatigue_reset_random: False
+fatigue_reset_vec: null
+knockout_muscles: null # list of muscle names to disable, e.g., ["tib_ant_l"]

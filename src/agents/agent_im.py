@@ -11,6 +11,7 @@ import os
 import torch
 import numpy as np
 import logging
+import wandb
 
 os.environ["OMP_NUM_THREADS"] = "1"
 
@@ -75,7 +76,7 @@ class AgentIM(AgentHumanoid):
         self.env = MyoLegsIm(self.cfg)
         logger.info("MyoLegsIm environment initialized.")
 
-    def eval_policy(self, epoch: int = 0, dump: bool = False, runs = None) -> float:
+    def eval_policy(self, epoch: int = 0, dump: bool = False, runs = None) -> dict:
         """
         Evaluates the current policy by running multiple episodes and computing success rates.
 
@@ -84,7 +85,7 @@ class AgentIM(AgentHumanoid):
             dump (bool, optional): Flag indicating whether to dump evaluation results.
 
         Returns:
-            float: The success rate of the policy.
+            dict: Evaluation metrics.
         """
         logger.info("Starting policy evaluation.")
         res_dict_acc = {}
@@ -104,16 +105,28 @@ class AgentIM(AgentHumanoid):
             for run_idx in self.env.forward_motions():
                 success = False
                 for attempt in range(1):
-                    result, mpjpe, frame_coverage = self.eval_single_thread()
+                    result, mpjpe, frame_coverage, frames, joint_angles = self.eval_single_thread(capture=True)
                     if result is True:
                         success = True
                         logger.info(f"Run {run_idx}: Success on attempt {attempt + 1}. MPJPE: {mpjpe * 1000:.5f}, Frame Coverage: {frame_coverage * 100:.5f}")
                     else:
                         success = False
-                        logger.info(f"Run {run_idx}: Failure on attempt {attempt + 1}. MPJPE: {mpjpe * 1000:.5f}, Frame Coverage: {frame_coverage[0] * 100:.5f}")
+                        # logger.info(f"Run {run_idx}: Failure on attempt {attempt + 1}. MPJPE: {mpjpe * 1000:.5f}, Frame Coverage: {frame_coverage * 100:.5f}")
                     success_dict[run_idx] = success
                     mpjpe_dict[run_idx] = mpjpe
                     frame_coverage_dict[run_idx] = frame_coverage
+
+                    # if not self.cfg.no_log:
+                    #     if len(frames) > 0:
+                    #         # wandb.Video expects (T, C, H, W)
+                    #         video_data = np.array(frames).transpose(0, 3, 1, 2)
+                    #         wandb.log({f"eval/video_{run_idx}": wandb.Video(video_data, fps=20, format="mp4")}, step=self.epoch)
+                        
+                    #     if len(joint_angles) > 0:
+                    #         angles_data = np.array(joint_angles)
+                    #         table = wandb.Table(data=joint_angles, columns=[f"joint_{i}" for i in range(angles_data.shape[1])])
+                    #         wandb.log({f"eval/joint_angles_{run_idx}": table}, step=self.epoch)
+
                 if runs is not None:
                     run_ctr += 1
                     if run_ctr >= runs:
@@ -138,17 +151,27 @@ class AgentIM(AgentHumanoid):
             breakpoint()
             print("Saving recorded biomechanics data.")
             
+        res_dict = {
+            "eval/success_rate": success_rate,
+            "eval/mean_mpjpe": mean_mpjpe,
+            "eval/mean_frame_coverage": mean_frame_coverage,
+        }
 
-        return mpjpe_dict, success_rate
+        if not self.cfg.no_log and not self.training:
+            wandb.log(res_dict, step=self.epoch)
+
+        return res_dict
 
     
-    def eval_single_thread(self) -> bool:
+    def eval_single_thread(self, capture: bool = False) -> tuple:
         """
         Evaluates the policy in a single thread by running an episode.
 
         Returns:
-            bool: True if the episode terminated successfully, False otherwise.
+            tuple: (success, mpjpe, frame_coverage, frames, joint_angles)
         """
+        frames = []
+        joint_angles = []
         with to_cpu(*self.sample_modules), torch.no_grad():
             obs_dict, info = self.env.reset()
             state = self.preprocess_obs(obs_dict)
@@ -156,6 +179,14 @@ class AgentIM(AgentHumanoid):
                 actions = self.policy_net.select_action(
                     torch.from_numpy(state).to(self.dtype), True
                 )[0].numpy()
+
+                # if capture:
+                #     frame = self.env.render()
+                #     if isinstance(frame, np.ndarray):
+                #         frames.append(frame)
+                #     if hasattr(self.env, 'data') and hasattr(self.env.data, 'qpos'):
+                #         joint_angles.append(self.env.data.qpos[7:].copy().tolist())
+
                 next_obs, reward, terminated, truncated, info = self.env.step(
                     self.preprocess_actions(actions)
                 )
@@ -163,11 +194,11 @@ class AgentIM(AgentHumanoid):
                 done = terminated or truncated
 
                 if done:                      
-                    return not terminated, self.env.mpjpe_value, self.env.frame_coverage
+                    return not terminated, self.env.mpjpe_value, self.env.frame_coverage, frames, joint_angles
                 state = next_state
 
         # If the loop exits without termination, consider it a failure
-        return False, self.env.mpjpe, self.env.frame_coverage
+        return False, self.env.mpjpe, self.env.frame_coverage, frames, joint_angles
             
             
     def run_policy(self, epoch: int = 0, dump: bool = False) -> dict:
