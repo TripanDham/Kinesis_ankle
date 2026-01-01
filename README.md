@@ -6,6 +6,8 @@
   <img src="./assets/Fig1-abstract.png" alt="KINESIS Logo" width="400"/>
 </p>
 
+**🚨🚨 Update coming soon! 🚨🚨**  Kinesis now supports musculoskeletal embodiments of up to _290 muscles_ and downstream tasks including football penalty kicks ⚽️! Code and models coming soon.
+
 ## Overview
 
 KINESIS is a model-free reinforcement learning framework for physiologically plausible musculoskeletal motor control. Using a musculoskeletal model of the lower body with 80 muscle actuators and 20 degrees of freedom, KINESIS achieves strong imitation performance on motion capture data, is controllable via natural language, and can be fine-tuned for high-level tasks like goal-directed movement.
