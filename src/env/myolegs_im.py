@@ -100,6 +100,7 @@ class MyoLegsIm(MyoLegsTask):
         self.muscle_condition = cfg.env.get("muscle_condition", "")
         self.fatigue_reset_random = cfg.env.get("fatigue_reset_random", False)
         self.fatigue_reset_vec = cfg.env.get("fatigue_reset_vec", None)
+        self.persistent_fatigue = cfg.env.get("persistent_fatigue", False)
         self.knockout_muscles = cfg.env.get("knockout_muscles", None)
 
     def initialize_run_params(self, cfg: DictConfig) -> None:
@@ -179,10 +180,12 @@ class MyoLegsIm(MyoLegsTask):
             self.ref_pos = []
             self.ref_rot = []
             self.ref_vel = []
+            self.ref_joint_pos = []
             self.motion_id = []
             self.muscle_forces = []
             self.muscle_controls = []
             self.policy_outputs = []
+            self.fatigue_states = []
 
     def initialize_muscle_condition(self):
         """
@@ -478,10 +481,12 @@ class MyoLegsIm(MyoLegsTask):
         self.ref_pos.append(np.full(self.get_body_xpos()[None,][..., SMPL_TRACKED_IDS, :].shape, np.nan))
         self.ref_rot.append(np.full(self.get_body_xquat()[None,][..., SMPL_TRACKED_IDS, :].shape, np.nan))
         self.ref_vel.append(np.full(self.get_body_linear_vel()[None,][..., SMPL_TRACKED_IDS, :].shape, np.nan))
+        self.ref_joint_pos.append(np.full((76,), np.nan))
         self.motion_id.append(np.nan)
         self.muscle_forces.append(np.full(self.get_muscle_force().shape, np.nan))
         self.muscle_controls.append(np.full(self.mj_data.ctrl.shape, np.nan))
         self.policy_outputs.append(np.full(self.mj_data.ctrl.shape, np.nan))
+        self.fatigue_states.append(np.full(self.mj_data.ctrl.shape, np.nan))
 
     def get_task_obs_size(self) -> int:
         """
@@ -740,7 +745,7 @@ class MyoLegsIm(MyoLegsTask):
         ref_body_vel_subset = ref_dict.body_vel[..., SMPL_TRACKED_IDS, :]
 
         if self.recording_biomechanics:
-            self.record_biomechanics(body_pos_subset, body_rot_subset, body_vel_subset, ref_pos_subset, ref_rot_subset, ref_body_vel_subset)
+            self.record_biomechanics(body_pos_subset, body_rot_subset, body_vel_subset, ref_pos_subset, ref_rot_subset, ref_body_vel_subset, ref_dict.qpos)
 
         full_task_obs = compute_imitation_observations(
             root_pos,
@@ -770,7 +775,8 @@ class MyoLegsIm(MyoLegsTask):
                             body_vel: np.ndarray, 
                             ref_pos: np.ndarray, 
                             ref_rot: np.ndarray, 
-                            ref_vel: np.ndarray
+                            ref_vel: np.ndarray,
+                            ref_qpos: Optional[np.ndarray] = None
                             ) -> None:
         """
         Records biomechanical data for the current simulation step.
@@ -811,9 +817,172 @@ class MyoLegsIm(MyoLegsTask):
         self.ref_pos.append(ref_pos.copy())
         self.ref_rot.append(ref_rot.copy())
         self.ref_vel.append(ref_vel.copy())
+        if ref_qpos is not None:
+             self.ref_joint_pos.append(ref_qpos.flatten().copy())
+        else:
+             self.ref_joint_pos.append(np.full((76,), np.nan))
         self.motion_id.append(self.motion_start_idx)
         self.muscle_forces.append(self.get_muscle_force().copy())
         self.muscle_controls.append(self.mj_data.ctrl.copy())
+        if self.muscle_condition == "fatigue":
+            self.fatigue_states.append(self.muscle_fatigue.MF.copy())
+        else:
+            self.fatigue_states.append(np.zeros_like(self.mj_data.ctrl)) # Or a dummy array
+
+    def plot_joint_angles(self):
+        """
+        Plots simulated vs reference joint angles for recorded episodes.
+        Generates individual plots for each run, a summary plot, and fatigue reports.
+        Saves plots to data/plots/ and fatigue data to data/plots/fatigue_final_report.txt.
+        """
+        import matplotlib.pyplot as plt
+        import os
+
+        if not self.recording_biomechanics or len(self.joint_pos) == 0:
+            logger.warning("No biomechanical data recorded to plot.")
+            return
+
+        os.makedirs("data/plots", exist_ok=True)
+
+        # Indices and names
+        myo_indices = {
+            "Hip Flexion R": 7, "Knee R": 12, "Ankle R": 15,
+            "Hip Flexion L": 21, "Knee L": 26, "Ankle L": 29
+        }
+        ref_indices = {
+            "Hip Flexion R": 19, "Knee R": 22, "Ankle R": 25,
+            "Hip Flexion L": 7, "Knee L": 10, "Ankle L": 13
+        }
+
+        # Convert to arrays
+        sim_data_full = np.array(self.joint_pos)
+        ref_data_full = np.array(self.ref_joint_pos)
+        fatigue_data_full = np.array(self.fatigue_states) if hasattr(self, 'fatigue_states') and len(self.fatigue_states) > 0 else None
+
+        # Split into episodes using NaN markers
+        nan_indices = np.where(np.isnan(sim_data_full[:, 0]))[0]
+        episodes_sim = []
+        episodes_ref = []
+        episodes_fatigue = []
+        
+        start_idx = 0
+        for nan_idx in nan_indices:
+            if nan_idx > start_idx:
+                episodes_sim.append(sim_data_full[start_idx:nan_idx])
+                episodes_ref.append(ref_data_full[start_idx:nan_idx])
+                if fatigue_data_full is not None:
+                    episodes_fatigue.append(fatigue_data_full[start_idx:nan_idx])
+            start_idx = nan_idx + 1
+        
+        # Add the last episode if not empty
+        if start_idx < len(sim_data_full):
+            episodes_sim.append(sim_data_full[start_idx:])
+            episodes_ref.append(ref_data_full[start_idx:])
+            if fatigue_data_full is not None:
+                episodes_fatigue.append(fatigue_data_full[start_idx:])
+
+        if not episodes_sim:
+            logger.warning("No valid episodes found for plotting.")
+            return
+
+        # --- Helper for Plotting ---
+        def plot_angles_to_ax(ax, time, sim_vals, ref_vals, title, is_summary=False, std_vals=None):
+            sim_plot = sim_vals.copy()
+            ref_plot = ref_vals.copy()
+            
+            # Flipping logic for specific joints
+            if title in ["Hip Flexion R", "Hip Flexion L", "Ankle R", "Ankle L"]:
+                sim_plot = -sim_plot
+            
+            if is_summary and std_vals is not None:
+                ax.fill_between(time, np.degrees(sim_plot - std_vals), np.degrees(sim_plot + std_vals), color="blue", alpha=0.2)
+            
+            ax.plot(time, np.degrees(sim_plot), label="Simulated", color="blue")
+            ax.plot(time, np.degrees(ref_plot), label="Reference", color="red", linestyle="--")
+            ax.set_title(title)
+            ax.set_ylabel("Angle (deg)")
+            ax.grid(True, linestyle=":", alpha=0.6)
+            ax.legend(fontsize='small')
+
+        # --- 1. INDIVIDUAL RUN PLOTS ---
+        for run_idx, (sim, ref) in enumerate(zip(episodes_sim, episodes_ref)):
+            time_run = np.arange(len(sim)) * self.dt
+            fig, axes = plt.subplots(3, 2, figsize=(15, 12), sharex=True)
+            fig.suptitle(f"Joint Angle Imitation - Run {run_idx}")
+            for i, (name, myo_idx) in enumerate(myo_indices.items()):
+                row, col = i % 3, i // 3
+                plot_angles_to_ax(axes[row, col], time_run, sim[:, myo_idx], ref[:, ref_indices[name]], name)
+                if row == 2: axes[row, col].set_xlabel("Time (s)")
+            plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+            plt.savefig(f"data/plots/joint_angles_run_{run_idx}.png")
+            plt.close()
+        
+        # Also save the last one as joint_angles_last.png for backward compatibility/quick view
+        if len(episodes_sim) > 0:
+            import shutil
+            shutil.copy(f"data/plots/joint_angles_run_{len(episodes_sim)-1}.png", "data/plots/joint_angles_last.png")
+
+        # --- 2. SUMMARY PLOT ---
+        if len(episodes_sim) > 1:
+            min_len = min(len(e) for e in episodes_sim)
+            aligned_sim = np.stack([e[:min_len] for e in episodes_sim])
+            aligned_ref = np.stack([e[:min_len] for e in episodes_ref])
+            
+            mean_sim = np.mean(aligned_sim, axis=0)
+            std_sim = np.std(aligned_sim, axis=0)
+            mean_ref = np.mean(aligned_ref, axis=0)
+            
+            time_sum = np.arange(min_len) * self.dt
+            fig, axes = plt.subplots(3, 2, figsize=(15, 12), sharex=True)
+            fig.suptitle(f"Joint Angle Summary ({len(episodes_sim)} runs)")
+            for i, (name, myo_idx) in enumerate(myo_indices.items()):
+                row, col = i % 3, i // 3
+                plot_angles_to_ax(axes[row, col], time_sum, mean_sim[:, myo_idx], mean_ref[:, ref_indices[name]], name, is_summary=True, std_vals=std_sim[:, myo_idx])
+                if row == 2: axes[row, col].set_xlabel("Time (s)")
+            plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+            plt.savefig("data/plots/joint_angles_summary.png")
+            plt.close()
+
+        # --- 3. FATIGUE DATA & LOGGING ---
+        if self.muscle_condition == "fatigue" and episodes_fatigue:
+            all_act_names = get_actuator_names(self.mj_model)
+            mus_ind = self.mj_model.actuator_dyntype == mujoco.mjtDyn.mjDYN_MUSCLE
+            mus_names = [n for i, n in enumerate(all_act_names) if mus_ind[i]]
+            key_muscles = ["soleus_r", "tibant_r", "vaslat_r", "glmax1_r", "hamstrings_r"]
+            
+            # Fatigue Logging
+            log_path = "data/plots/fatigue_final_report.txt"
+            with open(log_path, "w") as f:
+                f.write("Final Fatigue States Report\n")
+                f.write("="*30 + "\n\n")
+                
+                for run_idx, fatigue_run in enumerate(episodes_fatigue):
+                    f.write(f"Run {run_idx} Final Fatigue Levels:\n")
+                    final_mf = fatigue_run[-1]
+                    # Sort muscles by fatigue level for better readability
+                    sorted_indices = np.argsort(final_mf)[::-1]
+                    for idx in sorted_indices:
+                        f.write(f"  {mus_names[idx]}: {final_mf[idx]:.4f}\n")
+                    f.write("\n")
+            logger.info(f"Fatigue report saved to {log_path}")
+
+            # Fatigue Plots (Summary only if multi)
+            min_len_f = min(len(e) for e in episodes_fatigue)
+            aligned_f = np.stack([e[:min_len_f] for e in episodes_fatigue])
+            time_f = np.arange(min_len_f) * self.dt
+            
+            plt.figure(figsize=(10, 6))
+            overall_mean_f = np.mean(np.mean(aligned_f, axis=0), axis=1)
+            plt.plot(time_f, overall_mean_f, label="Overall Mean Fatigue", color="black", linewidth=3)
+            for m_name in key_muscles:
+                if m_name in mus_names:
+                    m_idx = mus_names.index(m_name)
+                    m_mean = np.mean(aligned_f[:, :, m_idx], axis=0)
+                    plt.plot(time_f, m_mean, label=m_name, alpha=0.8)
+            
+            plt.title(f"Fatigue Summary ({len(episodes_fatigue)} runs)")
+            plt.xlabel("Time (s)"); plt.ylabel("Fatigue (MF)"); plt.ylim(0, 1.05); plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left'); plt.grid(True, linestyle=":", alpha=0.6); plt.tight_layout()
+            plt.savefig("data/plots/fatigue_summary.png"); plt.close()
 
     def record_evaluation_metrics(self, 
                                   body_pos: np.ndarray, 

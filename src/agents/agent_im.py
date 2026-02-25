@@ -98,6 +98,9 @@ class AgentIM(AgentHumanoid):
         mpjpe_dict = {}
         frame_coverage_dict = {}
 
+        if runs is None:
+            runs = self.cfg.run.get("num_motions", None)
+
         if runs is not None:
             run_ctr = 0
 
@@ -148,8 +151,9 @@ class AgentIM(AgentHumanoid):
             np.save(f"data/dumps/failed_keys_{self.cfg.epoch}.npy", failed_keys)
 
         if self.env.recording_biomechanics:
-            breakpoint()
+            # breakpoint()
             print("Saving recorded biomechanics data.")
+            self.env.plot_joint_angles()
             
         res_dict = {
             "eval/success_rate": success_rate,

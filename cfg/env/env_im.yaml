@@ -27,4 +27,5 @@ termination_distance: 0.15
 muscle_condition: "" # "fatigue", "sarcopenia", or "knockout"
 fatigue_reset_random: False
 fatigue_reset_vec: null
+persistent_fatigue: False
 knockout_muscles: null # list of muscle names to disable, e.g., ["tib_ant_l"]

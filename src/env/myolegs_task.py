@@ -24,10 +24,12 @@ class MyoLegsTask(MyoLegsEnv):
         # First reset humanoid, then reset task, then reset the simulation.
         "Resets at MyoLegsTask level"
         if hasattr(self, "muscle_condition") and self.muscle_condition == "fatigue":
-            self.muscle_fatigue.reset(
-                fatigue_reset_vec=self.fatigue_reset_vec,
-                fatigue_reset_random=self.fatigue_reset_random,
-            )
+            if not getattr(self, "persistent_fatigue", False) or not hasattr(self, "_fatigue_initialized"):
+                self.muscle_fatigue.reset(
+                    fatigue_reset_vec=self.fatigue_reset_vec,
+                    fatigue_reset_random=self.fatigue_reset_random,
+                )
+                self._fatigue_initialized = True
 
         self.reset_task(options=options)
         return super().reset(seed=seed, options=options)
