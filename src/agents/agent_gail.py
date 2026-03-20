@@ -23,7 +23,7 @@ class AgentGAIL(AgentHumanoid):
         
         # Expert buffer for discriminator training
         if training:
-            self.history_len = cfg.env.get("history_len", 3)
+            self.history_len = cfg.run.get("history_len", 6)
             self.batch_size_disc = cfg.learning.get("batch_size_disc", 64)
             self.loader_exp = get_expert_loader(
                 path=cfg.run.expert_buffer_path,
@@ -31,7 +31,6 @@ class AgentGAIL(AgentHumanoid):
                 history_len=self.history_len,
                 shuffle=True
             )
-            self.iter_exp = iter(self.loader_exp)
             self.epoch_disc = cfg.learning.get("epoch_disc", 10)
     def setup_env(self):
         """
@@ -83,19 +82,18 @@ class AgentGAIL(AgentHumanoid):
             # State-only GAIL uses a dummy action
             actions_pi = torch.zeros((self.batch_size_disc, 0), device=self.device)
             
-            # Sample from expert buffer
-            try:
-                states_exp = next(self.iter_exp)
-            except StopIteration:
-                self.iter_exp = iter(self.loader_exp)
-                states_exp = next(self.iter_exp)
+            # Extract target speeds from agent rollouts
+            # States are (batch, 30 * history_len). Reshape to (batch, history_len, 30)
+            # The speed is the last element of each 30D frame.
+            states_pi_frames = states_pi.view(self.batch_size_disc, self.history_len, 30)
+            target_speeds = states_pi_frames[:, -1, -1]
             
+            # Sample expert data matching these speeds
+            states_exp = self.loader_exp.dataset.sample_by_speed(target_speeds, self.batch_size_disc)
             states_exp = states_exp.to(self.dtype).to(self.device)
-            # GAILDiscrim.forward(states, actions)
-            
             # Update discriminator
             logits_pi = self.env.gail_disc(states_pi, actions_pi)
-            logits_exp = self.env.gail_disc(states_exp, actions_pi) # Using dummy actions for both
+            logits_exp = self.env.gail_disc(states_exp, actions_pi)
             
             loss_pi = -F.logsigmoid(-logits_pi).mean()
             loss_exp = -F.logsigmoid(logits_exp).mean()

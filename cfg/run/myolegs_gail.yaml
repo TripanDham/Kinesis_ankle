@@ -11,6 +11,12 @@ num_motions: 22
 random_sample: false
 random_start: true
 recording_biomechanics: true
+eval_target_speed: null
+record_biomechanics: true
+plot_biomechanics: true
+history_len: 6
+muscle_effort_weight: 0.01
+motor_effort_weight: 0.01
 
 # Execution
 im_eval: false

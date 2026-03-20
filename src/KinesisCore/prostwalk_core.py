@@ -105,23 +105,41 @@ class ProstWalkCore:
         # Detect units
         unit_scale = np.pi / 180.0 if in_degrees else 1.0
         
-        # Example mapping (Pelvis Euler -> Quat)
-        # Note: OpenSim Pelvis Euler order is typically tilt(X), list(Z), rotation(Y) 
-        # but the column order in the file is tilt, list, rotation.
-        # We assume 'xyz' intrinsic for now as a common default for Mujoco conversion.
+        # ============================================================
+        # Frame rotation: OpenSim Y-up -> MuJoCo Z-up
+        # The original rotation applied (to go from MuJoCo to OpenSim) was:
+        #   1st: Rx(-π/2)  2nd: Ry(π/2)
+        # So the INVERSE (OpenSim -> MuJoCo) is:
+        #   1st: Ry(-π/2)  2nd: Rx(π/2)
+        # ============================================================
+        # R_y_neg = sRot.from_euler('y', -np.pi/2)
+        R_x_pos = sRot.from_euler('x', np.pi/2)
+        R_frame = R_x_pos
+        R_frame_matrix = R_frame.as_matrix()  # 3x3
+        
+        # --- Rotate Pelvis Translation ---
+        pelvis_trans_raw = df[['pelvis_tx', 'pelvis_ty', 'pelvis_tz']].values
+        pelvis_trans = (R_frame_matrix @ pelvis_trans_raw.T).T  # (N, 3)
+        
+        # --- Rotate Pelvis Orientation ---
+        # Convert euler angles to quaternions in OpenSim frame, then rotate into MuJoCo frame
         pelvis_euler = df[['pelvis_tilt', 'pelvis_list', 'pelvis_rotation']].values * unit_scale
-        pelvis_quat = sRot.from_euler('xyz', pelvis_euler).as_quat()
-        pelvis_trans = df[['pelvis_tx', 'pelvis_ty', 'pelvis_tz']].values
+        pelvis_rot_opensim = sRot.from_euler('xyz', pelvis_euler)
+        pelvis_rot_mujoco = R_frame * pelvis_rot_opensim  # Pre-multiply by frame rotation
+        pelvis_quat = pelvis_rot_mujoco.as_quat()  # [x, y, z, w]
         
         if mu_joint_names is not None:
-             # Map provided MuJoCo joints to mot columns
-             # mu_joint_names should not include the free/root joint if handled separately
-             joint_angles = np.zeros((len(df), len(mu_joint_names)), dtype=np.float32)
-             for i, mu_name in enumerate(mu_joint_names):
+             # Identify actual hinges/slides vs the root freejoint
+             # In MuJoCo, root is typically index 0 and has 'root' in the name
+             real_joint_names = [n for n in mu_joint_names if 'root' not in n.lower()]
+             joint_angles = np.zeros((len(df), len(real_joint_names)), dtype=np.float32)
+             
+             for i, mu_name in enumerate(real_joint_names):
                   if mu_name in df.columns:
                        joint_angles[:, i] = df[mu_name].values * unit_scale
-                  elif mu_name == 'myolegs_root':
-                       continue 
+                  else:
+                       # Handle cases like socket joints that might be in model but not in .mot
+                       pass 
         else:
             # Fallback to old behavior: extract everything except pelvis
             exclude = ['time', 'pelvis_tilt', 'pelvis_list', 'pelvis_rotation', 'pelvis_tx', 'pelvis_ty', 'pelvis_tz']
@@ -135,13 +153,20 @@ class ProstWalkCore:
         
         qpos = np.concatenate([pelvis_trans, pelvis_quat_mj, joint_angles], axis=1)
         
-        # Compute qvel
+        # Compute qvel (from ROTATED translation and orientation)
         dt = 1.0 / fps
-        # 1. Pelvis linear velocity (world frame)
+        # 1. Pelvis linear velocity (world frame, already in MuJoCo frame)
         lin_vel = np.diff(pelvis_trans, axis=0) / dt
         
+        # Extract nominal speed from filename to add to forward velocity
+        # Pattern: _0p6_ -> 0.6
+        match = re.search(r'_(\d+p\d+)', os.path.basename(filepath))
+        if match:
+            motion_speed = float(match.group(1).replace('p', '.'))
+            lin_vel[:, 0] += motion_speed
+        
         # 2. Pelvis angular velocity (world frame)
-        # pelvis_quat is [x, y, z, w] from sRot
+        # pelvis_quat is [x, y, z, w] from sRot (already rotated)
         r = sRot.from_quat(pelvis_quat)
         r1 = r[:-1]
         r2 = r[1:]
@@ -165,8 +190,9 @@ class ProstWalkCore:
             'qvel': qvel.astype(np.float32),
             'fps': fps,
             'pose_aa': np.zeros((qpos.shape[0], 24, 3)), # Placeholder
-            'trans_orig': pelvis_trans.astype(np.float32),
+            'trans_orig': pelvis_trans_raw.astype(np.float32),
         }
+
 
     def _bunch_by_velocity(self) -> dict:
         """Bunches motion IDs by velocity extracted from keys (filenames)."""
@@ -184,6 +210,10 @@ class ProstWalkCore:
                 groups[vel] = []
             groups[vel].append(idx)
         return groups
+
+    @property
+    def available_speeds(self):
+        return sorted(list(self._velocity_groups.keys()))
 
     def sample_motions_by_velocity(self, velocity: float, n: int = 1) -> np.ndarray:
         """Samples motions specifically from a velocity group."""

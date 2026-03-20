@@ -26,6 +26,9 @@ from src.learning.learning_utils import to_test, to_cpu, rescale_actions
 import random
 random.seed(0)
 
+import logging
+logger = logging.getLogger(__name__)
+
 from typing import Any, Optional, List
 
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -109,18 +112,18 @@ class Agent:
 
         # Create memory and logger instances
         memory = Memory()
-        logger = self.logger_rl_cls()
+        logger_rl = self.logger_rl_cls()
 
         # Execute pre-sample operations
         self.pre_sample()
 
         try:
-            while logger.num_steps < min_batch_size:
+            while logger_rl.num_steps < min_batch_size:
                 obs_dict, info = self.env.reset()
                 state = self.preprocess_obs(
                     obs_dict
                 )  # let's assume that the environment always return a np.ndarray (see https://gymnasium.farama.org/api/wrappers/observation_wrappers/#gymnasium.wrappers.FlattenObservation)
-                logger.start_episode(self.env)
+                logger_rl.start_episode(self.env)
                 for t in range(10000):
                     mean_action = self.mean_action or self.env.np_random.binomial(
                         1, 1 - self.noise_rate
@@ -135,7 +138,7 @@ class Agent:
                     episode_done = terminated or truncated
                     next_state = self.preprocess_obs(next_obs)
 
-                    logger.step(self.env, reward, info)
+                    logger_rl.step(self.env, reward, info)
 
                     mask = 0 if episode_done else 1
                     exp = 1 - mean_action
@@ -155,17 +158,17 @@ class Agent:
                         break
                     state = next_state
 
-                logger.end_episode(self.env)
+                logger_rl.end_episode(self.env)
         except Exception as e:
             logger.error(f"Sampling worker {pid} failed with exception: {e}")
         finally:
-            logger.end_sampling()
+            logger_rl.end_sampling()
 
             if queue is not None:
-                queue.put([pid, memory, logger])
+                queue.put([pid, memory, logger_rl])
                 done.wait()
             else:
-                return memory, logger
+                return memory, logger_rl
 
     def pre_episode(self):
         return

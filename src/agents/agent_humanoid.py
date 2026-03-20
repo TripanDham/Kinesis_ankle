@@ -23,7 +23,8 @@ from src.learning.policy_lattice import PolicyLattice
 from src.learning.policy_moe import PolicyMOE
 from src.learning.critic import Value
 from src.learning.mlp import MLP
-from src.learning.learning_utils import to_device, to_cpu, get_optimizer
+import src.learning.learning_utils as learning_utils
+from src.learning.learning_utils import to_device, to_cpu, get_optimizer, to_test, to_train
 
 import logging
 
@@ -67,7 +68,7 @@ class AgentHumanoid(AgentPPO, ABC):
             dtype=dtype,
             device=device,
             mean_action=cfg.test,
-            headless=not cfg.headless,
+            headless=cfg.headless,
             num_threads=cfg.run.num_threads,
             policy_net=self.policy_net,
             value_net=self.value_net,
@@ -220,6 +221,7 @@ class AgentHumanoid(AgentPPO, ABC):
         """
         Save the current state as a checkpoint.
         """
+        os.makedirs(self.cfg.output_dir, exist_ok=True)
         torch.save(
             self.get_full_state_weights(),
             f"{self.cfg.output_dir}/model_{self.epoch:08d}.pth",
@@ -232,6 +234,7 @@ class AgentHumanoid(AgentPPO, ABC):
         """and how 
         Save the current state as the latest model.
         """
+        os.makedirs(self.cfg.output_dir, exist_ok=True)
         torch.save(self.get_full_state_weights(), f"{self.cfg.output_dir}/model.pth")
         print(
             f"==============================Saved current model: Epoch {self.epoch}=============================="
@@ -245,23 +248,41 @@ class AgentHumanoid(AgentPPO, ABC):
             epoch (int): Epoch number to load. -1 loads the latest model.
         """
         if epoch == -1:
-            checkpoint_path = os.path.join(self.cfg.output_dir, "model.pth")
-            if os.path.exists(checkpoint_path):
+            # Try configured output_dir first, then current directory (Hydra behavior)
+            paths_to_try = [
+                os.path.join(self.cfg.output_dir, "model.pth"),
+                "model.pth",
+                os.path.join(os.getcwd(), "model.pth")
+            ]
+            checkpoint_path = None
+            for p in paths_to_try:
+                if os.path.exists(p):
+                    checkpoint_path = p
+                    break
+            
+            if checkpoint_path:
                 state = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
                 self.set_full_state_weights(state)
                 logger.info(f"Loaded latest checkpoint from {checkpoint_path}")
             else:
-                logger.warning(f"No checkpoint found at {checkpoint_path}")
+                logger.warning(f"No checkpoint found at any of {paths_to_try}")
         elif epoch > 0:
-            checkpoint_path = os.path.join(
-                self.cfg.output_dir, f"model_{epoch:08d}.pth"
-            )
-            if os.path.exists(checkpoint_path):
+            paths_to_try = [
+                os.path.join(self.cfg.output_dir, f"model_{epoch:08d}.pth"),
+                f"model_{epoch:08d}.pth"
+            ]
+            checkpoint_path = None
+            for p in paths_to_try:
+                if os.path.exists(p):
+                    checkpoint_path = p
+                    break
+                    
+            if checkpoint_path:
                 state = torch.load(checkpoint_path, map_location=self.device)
                 self.set_full_state_weights(state)
                 logger.info(f"Loaded checkpoint from {checkpoint_path}")
             else:
-                logger.warning(f"No checkpoint found at {checkpoint_path}")
+                logger.warning(f"No checkpoint found at any of {paths_to_try}")
         else:
             logger.info("Starting model from scratch.")
 
@@ -360,52 +381,81 @@ class AgentHumanoid(AgentPPO, ABC):
 
         return eps_len_list
 
-    def eval_policy(self, epoch: int = 0, dump: bool = False) -> dict:
+    def eval_policy(self, runs: int = 10, dump: bool = False) -> dict:
         """
-        Evaluate the current policy. Placeholder implementation.
-
-        Args:
-            epoch (int, optional): Current epoch number.
-            dump (bool, optional): Flag indicating whether to dump evaluation results.
-
-        Returns:
-            dict: Evaluation metrics.
+        Simplified evaluation: Just run the policy in the environment.
         """
-        res_dicts = {}
-        return res_dicts
+        logger.info(f"Running policy for {runs} episodes...")
+        
+        with to_test(*self.sample_modules):
+            with to_cpu(*self.sample_modules):
+                with torch.no_grad():
+                    all_biomechanics = []
+                    for i in range(runs):
+                        obs_dict, info = self.env.reset()
+                        state = self.preprocess_obs(obs_dict)
+                        
+                        for t in range(10000):
+                            actions = self.policy_net.select_action(
+                                torch.from_numpy(state).to(self.dtype), True
+                            )[0].numpy()
 
-    def run_policy(self, epoch: int = 0, dump: bool = False) -> dict:
+                            next_obs, reward, terminated, truncated, info = self.env.step(
+                                self.preprocess_actions(actions)
+                            )
+                            state = self.preprocess_obs(next_obs)
+                            
+                            if not self.headless:
+                                self.env.render()
+                                
+                            if terminated or truncated:
+                                logger.info(f"Episode {i} ended at step {t}")
+                                if "biomechanics_data" in info:
+                                    all_biomechanics.append(info["biomechanics_data"])
+                                break
+                                
+                    if getattr(self.cfg.run, "plot_biomechanics", False) and all_biomechanics:
+                        from src.utils.biomechanics_plotter import plot_biomechanics
+                        plot_biomechanics(all_biomechanics, self.env)
+                                
+        return {}
+
+    def run_policy(self) -> None:
         """
-        Run the trained policy in the environment indefinitely until episodes terminate.
-
-        Args:
-            epoch (int, optional): Current epoch number.
-            dump (bool, optional): Flag indicating whether to dump run results.
-
-        Returns:
-            dict: Run metrics.
+        Run the trained policy in the environment indefinitely with visualization.
         """
-        with to_cpu(*self.sample_modules):
-            with torch.no_grad():
-                while True:
-                    obs_dict, info = self.env.reset()
-                    state = self.preprocess_obs(obs_dict)
-                    for t in range(10000):
-                        actions = self.policy_net.select_action(
-                            torch.from_numpy(state).to(self.dtype), True
-                        )[0].numpy()
+        with to_test(*self.sample_modules):
+            with to_cpu(*self.sample_modules):
+                with torch.no_grad():
+                    all_biomechanics = []
+                    while True:
+                        obs_dict, info = self.env.reset()
+                        state = self.preprocess_obs(obs_dict)
+                        for t in range(10000):
+                            actions = self.policy_net.select_action(
+                                torch.from_numpy(state).to(self.dtype), True
+                            )[0].numpy()
 
-                        next_obs, reward, terminated, truncated, info = self.env.step(
-                            self.preprocess_actions(actions)
-                        )
-                        next_state = self.preprocess_obs(next_obs)
-                        done = terminated or truncated
-
-                        if done:
-                            break
-                        state = next_state
-        res_dicts = {}
-        return res_dicts
+                            next_obs, reward, terminated, truncated, info = self.env.step(
+                                self.preprocess_actions(actions)
+                            )
+                            next_state = self.preprocess_obs(next_obs)
+                            
+                            if not self.headless:
+                                self.env.render()
+                                
+                            if terminated or truncated:
+                                logger.info(f"Visualized episode ended at step {t}")
+                                if "biomechanics_data" in info:
+                                    all_biomechanics.append(info["biomechanics_data"])
+                                    
+                                if getattr(self.cfg.run, "plot_biomechanics", False) and all_biomechanics:
+                                    from src.utils.biomechanics_plotter import plot_biomechanics
+                                    plot_biomechanics(all_biomechanics, self.env)
+                                    # Reset for next visual run
+                                    all_biomechanics = []
+                                break
+                            state = next_state
 
     def seed(self, seed):
         """

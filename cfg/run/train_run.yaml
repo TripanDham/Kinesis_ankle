@@ -20,5 +20,10 @@ smpl_data_dir: "data/smpl"
 initial_pose_file: "data/initial_pose/initial_pose_train.pkl"
 expert_path: ""
 
-recording_biomechanics: False
 deactivate_muscles: False
+
+# Evaluation and Recording
+eval_target_speed: null
+record_biomechanics: True
+plot_biomechanics: True
+history_len: 6

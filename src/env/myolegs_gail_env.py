@@ -266,12 +266,8 @@ class MyoLegsGailEnv(BaseEnv):
         Executes a physics step in the simulation with the given action.
 
         Depending on the control mode, computes muscle activations and applies them 
-        to the simulation. Tracks power usage during the step.
-
-        Args:
-            action (np.ndarray): The action to apply. If None, a random action is sampled.
+        to the simulation.
         """
-        self.curr_power_usage = []
 
         if action is None:
             action = self.action_space.sample()
@@ -299,7 +295,7 @@ class MyoLegsGailEnv(BaseEnv):
                     # Update control for muscles
                     ctrl[self.muscle_idx] = muscle_activity
                     # Update control for motors (direct output)
-                    ctrl[self.motor_idx] = motor_action
+                    ctrl[self.motor_idx] = 2.88 * motor_action
 
                 elif self.control_mode == "direct":
                     ctrl[:] = (action + 1.0) / 2.0
@@ -309,7 +305,6 @@ class MyoLegsGailEnv(BaseEnv):
                   
                 self.mj_data.ctrl[:] = ctrl
                 mujoco.mj_step(self.mj_model, self.mj_data)
-                self.curr_power_usage.append(self.compute_energy_reward(ctrl))
     
     def deactivate_muscles(self, muscle_activity: np.ndarray, targetted_muscles: List[str]) -> np.ndarray:
         """
@@ -369,7 +364,7 @@ class MyoLegsGailEnv(BaseEnv):
         self.mj_data.qpos[:] = 0
         self.mj_data.qvel[:] = 0
         self.mj_data.qpos[2] = 0.94
-        self.mj_data.qpos[3:7] = np.array([0.5, 0.5, 0.5, 0.5])   
+        self.mj_data.qpos[3:7] = np.array([1.0, 0.0, 0.0, 0.0])   
 
     def reset_myolegs(self):
         self.init_myolegs()
