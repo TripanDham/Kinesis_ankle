@@ -63,7 +63,7 @@ def verify():
     # Test cases: (Mode Name, active_gains_flag, expected_dimension)
     test_cases = [
         ("ACTIVE GAINS (Original)", True, 60),
-        ("FIXED GAINS (New Mode)", False, 56)
+        ("FIXED GAINS (New Mode)", False, 54)
     ]
     
     overall_success = True

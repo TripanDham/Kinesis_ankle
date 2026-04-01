@@ -29,5 +29,7 @@ impedance_control: true
 active_gains: false
 fixed_knee_stiffness: 0.0
 fixed_knee_damping: 1.0
+fixed_knee_target: 0.0
 fixed_ankle_stiffness: 0.0
 fixed_ankle_damping: 1.0
+fixed_ankle_target: 0.0

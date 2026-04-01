@@ -51,8 +51,8 @@ class MyoLegsGailEnv(BaseEnv):
                 # Muscles (54) + 2 * (K, B, th) = 60
                 num_actions = (self.mj_model.nu - len(self.motor_idx)) + (len(self.motor_idx) * 3)
             else:
-                # Muscles (54) + 2 * (th) = 56
-                num_actions = (self.mj_model.nu - len(self.motor_idx)) + len(self.motor_idx)
+                # Biological Muscles Only (54)
+                num_actions = (self.mj_model.nu - len(self.motor_idx))
 
         self.action_space = gym.spaces.Box(
             low=-np.ones(num_actions),
@@ -288,66 +288,56 @@ class MyoLegsGailEnv(BaseEnv):
         muscle_action = action[self.muscle_idx]
         
         if self.impedance_control:
-            if self.active_gains:
-                # Layout: [muscles (54), knee_K, knee_B, knee_th, ankle_K, ankle_B, ankle_th]
-                imp_knee = action[54:57]
-                imp_ankle = action[57:60]
-                
-                # Map Knee (Gear: 49.4)
-                K_knee_raw = (imp_knee[0] + 1.0) * 250.0
-                B_knee_raw = (imp_knee[1] + 1.0) * 5.0
-                target_knee_val = imp_knee[2]
-                
-                # Map Ankle (Gear: 58.4)
-                K_ankle_raw = (imp_ankle[0] + 1.0) * 250.0
-                B_ankle_raw = (imp_ankle[1] + 1.0) * 5.0
-                target_ankle_val = imp_ankle[2]
-            else:
-                # Layout: [muscles (54), knee_th, ankle_th]
-                target_knee_val = action[54]
-                target_ankle_val = action[55]
-                
-                K_knee_raw = self.cfg.env.get("fixed_knee_stiffness", 0.0)
-                B_knee_raw = self.cfg.env.get("fixed_knee_damping", 1.0)
-                K_ankle_raw = self.cfg.env.get("fixed_ankle_stiffness", 0.0)
-                B_ankle_raw = self.cfg.env.get("fixed_ankle_damping", 1.0)
-
-            # Get gear ratios
-            gear_knee = self.mj_model.actuator_gear[self.motor_idx[0], 0]
-            gear_ankle = self.mj_model.actuator_gear[self.motor_idx[1], 0]
-
-            # Joint lookup and range mapping
-            j_knee = self.mj_model.actuator_trnid[self.motor_idx[0], 0]
+            # 1. Setup Joint/Actuator Metadata
+            knee_idx, ankle_idx = self.motor_idx[0], self.motor_idx[1]
+            gear_knee = self.mj_model.actuator_gear[knee_idx, 0]
+            gear_ankle = self.mj_model.actuator_gear[ankle_idx, 0]
+            
+            j_knee = self.mj_model.actuator_trnid[knee_idx, 0]
+            j_ankle = self.mj_model.actuator_trnid[ankle_idx, 0]
+            
             min_k, max_k = self.mj_model.jnt_range[j_knee]
-            target_knee = min_k + (target_knee_val + 1.0) * (max_k - min_k) / 2.0
+            min_a, max_a = self.mj_model.jnt_range[j_ankle]
+            
             q_knee = self.mj_data.qpos[self.mj_model.jnt_qposadr[j_knee]]
             v_knee = self.mj_data.qvel[self.mj_model.jnt_dofadr[j_knee]]
-
-            j_ankle = self.mj_model.actuator_trnid[self.motor_idx[1], 0]
-            min_a, max_a = self.mj_model.jnt_range[j_ankle]
-            target_ankle = min_a + (target_ankle_val + 1.0) * (max_a - min_a) / 2.0
             q_ankle = self.mj_data.qpos[self.mj_model.jnt_qposadr[j_ankle]]
             v_ankle = self.mj_data.qvel[self.mj_model.jnt_dofadr[j_ankle]]
 
-            # Scaling by the gear ratio ensures the internal control law produces 
-            # enough motor torque to overcome the physical load after the gear.
-            K_knee_scaled = K_knee_raw * gear_knee
-            B_knee_scaled = B_knee_raw * gear_knee
-            K_ankle_scaled = K_ankle_raw * gear_ankle
-            B_ankle_scaled = B_ankle_raw * gear_ankle
+            # 2. Determine K, B, and Target Position
+            if self.active_gains:
+                # Active Mode: Map 6 actions [54:60]
+                imp_knee, imp_ankle = action[54:57], action[57:60]
+                
+                K_knee_raw = (imp_knee[0] + 1.0) * 250.0
+                B_knee_raw = (imp_knee[1] + 1.0) * 5.0
+                target_knee = min_k + (imp_knee[2] + 1.0) * (max_k - min_k) / 2.0
+                
+                K_ankle_raw = (imp_ankle[0] + 1.0) * 250.0
+                B_ankle_raw = (imp_ankle[1] + 1.0) * 5.0
+                target_ankle = min_a + (imp_ankle[2] + 1.0) * (max_a - min_a) / 2.0
+            else:
+                # Fixed Mode: Pull from config (Radians)
+                K_knee_raw = self.cfg.env.get("fixed_knee_stiffness", 0.0)
+                B_knee_raw = self.cfg.env.get("fixed_knee_damping", 1.0)
+                target_knee = np.clip(self.cfg.env.get("fixed_knee_target", 0.0), min_k, max_k)
+                
+                K_ankle_raw = self.cfg.env.get("fixed_ankle_stiffness", 0.0)
+                B_ankle_raw = self.cfg.env.get("fixed_ankle_damping", 1.0)
+                target_ankle = np.clip(self.cfg.env.get("fixed_ankle_target", 0.0), min_a, max_a)
 
-            # User formula: Torque_joint = K(theta - theta_target) + B(theta_dot)
-            torque_knee = K_knee_scaled * (q_knee - target_knee) + B_knee_scaled * v_knee
-            torque_ankle = K_ankle_scaled * (q_ankle - target_ankle) + B_ankle_scaled * v_ankle
+            # 3. Calculate and Apply Scaling
+            K_knee_scaled, B_knee_scaled = K_knee_raw * gear_knee, B_knee_raw * gear_knee
+            K_ankle_scaled, B_ankle_scaled = K_ankle_raw * gear_ankle, B_ankle_raw * gear_ankle
+
+            # 4. Standard PD Control: Torque = K * (target - q) - B * v
+            torque_knee = K_knee_scaled * (target_knee - q_knee) - B_knee_scaled * v_knee
+            torque_ankle = K_ankle_scaled * (target_ankle - q_ankle) - B_ankle_scaled * v_ankle
             
-            # Set ctrl values (accounting for gear)
-            # ctrl = torque_joint / gear
-            motor_ctrl = np.array([
-                torque_knee / gear_knee,
-                torque_ankle / gear_ankle
-            ])
+            # 5. Set MJ Control (Torque / Gear)
+            motor_ctrl = np.array([torque_knee / gear_knee, torque_ankle / gear_ankle])
 
-            # Store for recording/logging
+            # 6. Store for logging/recording
             self.last_impedance = {
                 "knee_K": K_knee_scaled, "knee_B": B_knee_scaled, "knee_target": target_knee,
                 "ankle_K": K_ankle_scaled, "ankle_B": B_ankle_scaled, "ankle_target": target_ankle

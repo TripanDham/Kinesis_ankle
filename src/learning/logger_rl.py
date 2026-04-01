@@ -66,7 +66,7 @@ class LoggerRL:
             try:
                 # Only average items that can be converted to a numeric array
                 data = np.concatenate([np.array(x.info_dict[k]) for x in logger_list])
-                if np.issubdtype(data.dtype, np.number):
+                if np.issubdtype(data.dtype, np.number) and data.size > 0:
                     logger.info_dict[k] = np.mean(data)
             except (ValueError, TypeError):
                 # Skip non-numeric data like biomechanics_data

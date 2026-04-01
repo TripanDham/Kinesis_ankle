@@ -9,6 +9,13 @@ logger = logging.getLogger(__name__)
 
 @hydra.main(config_path="cfg", config_name="config")
 def main(cfg: DictConfig):
+    # Disable file logging if in test mode to avoid cluttering/overwriting server logs
+    if cfg.run.test:
+        for handler in logging.root.handlers[:]:
+            if isinstance(handler, logging.FileHandler):
+                logging.root.removeHandler(handler)
+        logger.info("Running in TEST mode: File logging disabled.")
+
     # Setup Device
     device = torch.device(cfg.run.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
     dtype = torch.float32
