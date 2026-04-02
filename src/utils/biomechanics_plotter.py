@@ -58,6 +58,8 @@ def plot_biomechanics(all_biomechanics, env):
     # DOF Indices (for Moments)
     knee_l_dof = env.mj_model.joint("knee_angle_l").dofadr[0] if get_jnt_id("knee_angle_l") != -1 else -1
     knee_r_dof = env.mj_model.joint("osl_knee_angle_r").dofadr[0] if get_jnt_id("osl_knee_angle_r") != -1 else -1
+    ankle_l_dof = env.mj_model.joint("ankle_angle_l").dofadr[0] if get_jnt_id("ankle_angle_l") != -1 else -1
+    ankle_r_dof = env.mj_model.joint("osl_ankle_angle_r").dofadr[0] if get_jnt_id("osl_ankle_angle_r") != -1 else -1
     
     # Gears
     gear_knee = env.mj_model.actuator_gear[knee_act_idx, 0] if knee_act_idx != -1 else 1.0
@@ -69,6 +71,8 @@ def plot_biomechanics(all_biomechanics, env):
     ankle_torque_rt = np.zeros((num_eps, min_len))
     knee_l_moment = np.zeros((num_eps, min_len))
     knee_r_moment = np.zeros((num_eps, min_len))
+    ankle_l_moment = np.zeros((num_eps, min_len))
+    ankle_r_moment = np.zeros((num_eps, min_len))
     
     joint_angles = {name: np.zeros((num_eps, min_len)) for name in joint_qpos_indices.keys()}
     foot_heights = {k: np.zeros((num_eps, min_len)) for k in ["right_foot", "left_foot", "right_ankle", "left_ankle"]}
@@ -93,6 +97,8 @@ def plot_biomechanics(all_biomechanics, env):
             if "qfrc_actuator" in step_data:
                 if knee_l_dof != -1: knee_l_moment[ep_idx, t] = step_data["qfrc_actuator"][knee_l_dof]
                 if knee_r_dof != -1: knee_r_moment[ep_idx, t] = step_data["qfrc_actuator"][knee_r_dof]
+                if ankle_l_dof != -1: ankle_l_moment[ep_idx, t] = step_data["qfrc_actuator"][ankle_l_dof]
+                if ankle_r_dof != -1: ankle_r_moment[ep_idx, t] = step_data["qfrc_actuator"][ankle_r_dof]
             
             if "heights" in step_data:
                 for k in foot_heights.keys():
@@ -107,9 +113,10 @@ def plot_biomechanics(all_biomechanics, env):
                     impedance_data[k][ep_idx, t] = step_data["impedance"].get(k, 0.0)
 
     # 5. Build Subplots (Dashboard)
-    rows = 6 if has_impedance else 4
+    rows = 7 if has_impedance else 5
     subplot_titles = (
-        "Joint-Level Net Moments (Nm) - Left", "Joint-Level Net Moments (Nm) - Right",
+        "Net Knee Moments (Nm) - L", "Net Knee Moments (Nm) - R",
+        "Net Ankle Moments (Nm) - L", "Net Ankle Moments (Nm) - R",
         "Leg Kinematics (Left)", "Leg Kinematics (Right)",
         "Ground Clearance (Feet Z-pos)", "Ground Clearance (Ankles Z-pos)",
         "Muscle Activation (Soleus L)", ""
@@ -134,34 +141,36 @@ def plot_biomechanics(all_biomechanics, env):
         fig.add_trace(go.Scatter(x=x, y=mean, line=dict(color=f'rgb({color})'), name=f"{name} Mean"), row=row, col=col)
         fig.update_yaxes(title_text=y_title, row=row, col=col)
 
-    # Row 1: Net Moments (Promoted to Top)
-    add_shaded_trace(fig, knee_l_moment, "Net Moment L", 1, 1, "100,100,100", "Nm")
-    add_shaded_trace(fig, knee_r_moment, "Net Moment R", 1, 2, "0,150,255", "Nm")
+    # Row 1-2: Net Moments
+    add_shaded_trace(fig, knee_l_moment, "Knee L", 1, 1, "100,100,100", "Nm")
+    add_shaded_trace(fig, knee_r_moment, "Knee R", 1, 2, "0,150,255", "Nm")
+    add_shaded_trace(fig, ankle_l_moment, "Ankle L", 2, 1, "100,100,100", "Nm")
+    add_shaded_trace(fig, ankle_r_moment, "Ankle R", 2, 2, "0,150,255", "Nm")
 
-    # Row 2: Kinematics
-    add_shaded_trace(fig, joint_angles["Knee L"], "Knee L", 2, 1, "150,0,250", "Rad")
-    add_shaded_trace(fig, joint_angles["Ankle L"], "Ankle L", 2, 1, "100,0,200", "Rad")
-    add_shaded_trace(fig, joint_angles["Knee R (Prosthetic)"], "Knee R", 2, 2, "255,100,0", "Rad")
-    add_shaded_trace(fig, joint_angles["Ankle R (Prosthetic)"], "Ankle R", 2, 2, "200,80,0", "Rad")
+    # Row 3: Kinematics
+    add_shaded_trace(fig, joint_angles["Knee L"], "Knee L", 3, 1, "150,0,250", "Rad")
+    add_shaded_trace(fig, joint_angles["Ankle L"], "Ankle L", 3, 1, "100,0,200", "Rad")
+    add_shaded_trace(fig, joint_angles["Knee R (Prosthetic)"], "Knee R", 3, 2, "255,100,0", "Rad")
+    add_shaded_trace(fig, joint_angles["Ankle R (Prosthetic)"], "Ankle R", 3, 2, "200,80,0", "Rad")
 
-    # Row 3: Foot/Ankle Heights
-    add_shaded_trace(fig, foot_heights["left_foot"], "Foot L", 3, 1, "0,150,0", "m")
-    add_shaded_trace(fig, foot_heights["right_foot"], "Foot R", 3, 1, "0,200,0", "m")
-    add_shaded_trace(fig, foot_heights["left_ankle"], "Ankle L", 3, 2, "150,150,0", "m")
-    add_shaded_trace(fig, foot_heights["right_ankle"], "Ankle R", 3, 2, "200,200,0", "m")
-    for c in [1, 2]: fig.add_shape(type="line", x0=0, y0=0, x1=min_len, y1=0, line=dict(color="black", dash="dash"), row=3, col=c)
+    # Row 4: Foot/Ankle Heights
+    add_shaded_trace(fig, foot_heights["left_foot"], "Foot L", 4, 1, "0,150,0", "m")
+    add_shaded_trace(fig, foot_heights["right_foot"], "Foot R", 4, 1, "0,200,0", "m")
+    add_shaded_trace(fig, foot_heights["left_ankle"], "Ankle L", 4, 2, "150,150,0", "m")
+    add_shaded_trace(fig, foot_heights["right_ankle"], "Ankle R", 4, 2, "200,200,0", "m")
+    for c in [1, 2]: fig.add_shape(type="line", x0=0, y0=0, x1=min_len, y1=0, line=dict(color="black", dash="dash"), row=4, col=c)
 
-    # Row 4: Muscle Activations
-    add_shaded_trace(fig, soleus_act, "Soleus L", 4, 1, "255,0,0", "Activation (0-1)")
+    # Row 5: Muscle Activations
+    add_shaded_trace(fig, soleus_act, "Soleus L", 5, 1, "255,0,0", "Activation (0-1)")
 
     if has_impedance:
-        # Row 5: Impedance Gains
-        add_shaded_trace(fig, impedance_data["knee_K"], "Knee K", 5, 1, "0,150,150", "Nm/rad")
-        add_shaded_trace(fig, impedance_data["ankle_K"], "Ankle K", 5, 2, "150,150,0", "Nm/rad")
+        # Row 6: Impedance Gains
+        add_shaded_trace(fig, impedance_data["knee_K"], "Knee K", 6, 1, "0,150,150", "Nm/rad")
+        add_shaded_trace(fig, impedance_data["ankle_K"], "Ankle K", 6, 2, "150,150,0", "Nm/rad")
         
-        # Row 6: Impedance Targets
-        add_shaded_trace(fig, impedance_data["knee_target"], "Knee Target", 6, 1, "0,150,150", "Rad")
-        add_shaded_trace(fig, impedance_data["ankle_target"], "Ankle Target", 6, 2, "150,150,0", "Rad")
+        # Row 7: Impedance Targets
+        add_shaded_trace(fig, impedance_data["knee_target"], "Knee Target", 7, 1, "0,150,150", "Rad")
+        add_shaded_trace(fig, impedance_data["ankle_target"], "Ankle Target", 7, 2, "150,150,0", "Rad")
 
     fig.update_layout(height=400 * rows, width=1200, title_text="MuJoCo Biomechanics Evaluation Dashboard", showlegend=True)
     

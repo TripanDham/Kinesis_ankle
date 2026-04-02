@@ -11,17 +11,17 @@ actor_type: "gauss"
 opt_num_epochs: 10
 
 # GAIL Discriminator parameters
-batch_size_disc: 64
-epoch_disc: 10
+batch_size_disc: 512
+epoch_disc: 2
 
 # Trajectory samples per epoch
-min_batch_size: 2048
+min_batch_size: 8192
 
 # Maximum gradient norm for PPO
 policy_grad_clip: 25
 
 # Latest model save frequency
-save_curr_frequency: 50
+save_curr_frequency: 10
 
 # Model save frequency
 save_frequency: 1000

@@ -49,6 +49,7 @@ class MyoLegsGAIL(MyoLegsGailTask):
 
         super().__init__(cfg)
         
+        self._setup_obs_mapping()
         self.setup_motionlib()
         
         # Discriminator receives same observations as actor (33D per frame)
@@ -61,6 +62,28 @@ class MyoLegsGAIL(MyoLegsGailTask):
         ).to(cfg.run.get("device", "cpu"))
         
         self.optim_disc = Adam(self.gail_disc.parameters(), lr=cfg.env.get("gail_lr", 1e-4))
+
+    def _setup_obs_mapping(self):
+        """Pre-calculates qpos/qvel indices for the 30D observation vector."""
+        # 1. Angles (13D)
+        # Root (3): tilt, list, rot
+        root_angle_names = ["pelvis_tilt", "pelvis_list", "pelvis_rotation"]
+        # Right Leg (5): hip (3), knee (1), ankle (1)
+        right_leg_names = ["hip_flexion_r", "hip_adduction_r", "hip_rotation_r", "knee_angle_r", "osl_ankle_angle_r"]
+        # Left Leg (5): hip (3), knee (1), ankle (1)
+        left_leg_names = ["hip_flexion_l", "hip_adduction_l", "hip_rotation_l", "knee_angle_l", "ankle_angle_l"]
+        
+        angle_names = root_angle_names + right_leg_names + left_leg_names
+        self.obs_qpos_idx = [self.mj_model.joint(n).qposadr[0] for n in angle_names]
+        
+        # 2. Velocities (16D)
+        # Root (6): lin (3), ang (3)
+        root_vel_names = ["pelvis_tx", "pelvis_ty", "pelvis_tz", "pelvis_tilt", "pelvis_list", "pelvis_rotation"]
+        # Right/Left joint velocities
+        vel_names = root_vel_names + right_leg_names + left_leg_names
+        self.obs_qvel_idx = [self.mj_model.joint(n).dofadr[0] for n in vel_names]
+        
+        logger.info(f"Observation mapping initialized for 30D vector.")
 
     def setup_motionlib(self):
         """Initializes the motion library using ProstWalkCore."""
@@ -77,35 +100,13 @@ class MyoLegsGAIL(MyoLegsGailTask):
         Computes the 30D raw observation (13 angles + 16 velocities + 1 target speed)
         matching the expert data format, excluding pelvis translation.
         """
-        qpos = self.mj_data.qpos
-        qvel = self.mj_data.qvel
+        # 1. Angles (13D)
+        angles = self.mj_data.qpos[self.obs_qpos_idx].astype(self.dtype)
         
-        # 1. Root rotation (Euler xyz) - NO translation
-        quat = qpos[3:7] # w, x, y, z
-        r = sRot.from_quat([quat[1], quat[2], quat[3], quat[0]]) # MJ -> scipy
-        pelvis_euler = r.as_euler('xyz') 
-        
-        angles = np.zeros(13, dtype=self.dtype)
-        angles[0:3] = pelvis_euler # tilt, list, rot
-        
-        # Joints: hip_flexion_r=7, hip_adduction_r=8, hip_rotation_r=9,
-        # osl_knee_angle_r=14, osl_ankle_angle_r=15,
-        # hip_flexion_l=16, hip_adduction_l=17, hip_rotation_l=18,
-        # knee_angle_l=21, ankle_angle_l=24
-        angles[3:6] = qpos[[7, 8, 9]]
-        angles[6:8] = qpos[[14, 15]]
-        angles[8:11] = qpos[[16, 17, 18]]
-        angles[11:13] = qpos[[21, 24]]
-        
-        # 2. Velocities (ALL kept, including root linear velocity)
-        vels = np.zeros(16, dtype=self.dtype)
-        vels[0:6] = qvel[0:6] # Root lin + ang
-        vels[6:9] = qvel[[6, 7, 8]]
-        vels[9:11] = qvel[[13, 14]]
-        vels[11:14] = qvel[[15, 16, 17]]
-        vels[14:16] = qvel[[20, 23]]
+        # 2. Velocities (16D)
+        vels = self.mj_data.qvel[self.obs_qvel_idx].astype(self.dtype)
 
-        self.curr_proprioception = angles
+        self.curr_proprioception = angles # Used for height/upright rewards
         
         # 3. Target Speed
         target_speed = np.array([self.target_speed], dtype=self.dtype)
@@ -137,14 +138,23 @@ class MyoLegsGAIL(MyoLegsGailTask):
 
     def init_myolegs(self):
         """
-        Initializes the MyoLegs environment from a pre-configured valid pose.
+        Initializes the MyoLegs environment using the 'stand' keyframe if available.
         """
-        self.mj_data.qpos[:] = 0
-        self.mj_data.qvel[:] = 0
-        
-        # 'stand' keyframe from myolegs_OSL_KA.xml
-        self.mj_data.qpos[2] = 0.95
-        self.mj_data.qpos[3:7] = np.array([0.707388, 0, 0, -0.706825])
+        try:
+            stand_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_KEY, 'stand')
+            if stand_id != -1:
+                self.mj_data.qpos[:] = self.mj_model.key_qpos[stand_id]
+                self.mj_data.qvel[:] = self.mj_model.key_qvel[stand_id]
+            else:
+                # Fallback if 'stand' key is missing
+                self.mj_data.qpos[:] = 0
+                self.mj_data.qvel[:] = 0
+                self.mj_data.qpos[2] = 0.95 # Generic height
+        except Exception as e:
+            logger.warning(f"Could not load 'stand' keyframe: {e}. Using default pose.")
+            self.mj_data.qpos[:] = 0
+            self.mj_data.qvel[:] = 0
+            self.mj_data.qpos[2] = 0.95
             
         mujoco.mj_kinematics(self.mj_model, self.mj_data)
 
@@ -187,19 +197,24 @@ class MyoLegsGAIL(MyoLegsGailTask):
         
         # Split Energy Reward
         muscle_effort = self.compute_muscle_effort(action)
-        motor_effort = self.compute_motor_effort(action)
         
-        w_muscle = self.cfg.run.get("muscle_effort_weight", 0.01)
-        w_motor = self.cfg.run.get("motor_effort_weight", 0.01)
+        # Ankle Delta Penalty (replaces motor effort)
+        # self.delta_ankle_action is non-zero only on the 10th step update
+        w_ankle_delta = self.cfg.env.reward_specs.get("w_ankle_delta", 0.01)
+        ankle_delta_penalty = np.sum(np.square(self.delta_ankle_action))
         
-        reward = 1 * im_reward + 0.2 * vel_reward + 0.3 * upright_reward - 0.01 * muscle_effort - 0.03 * motor_effort
+        reward = (1.0 * im_reward + 
+                  0.2 * vel_reward + 
+                  0.3 * upright_reward - 
+                  0.01 * muscle_effort - 
+                  w_ankle_delta * ankle_delta_penalty)
         
         self.reward_info = {
             "imitation_reward_gail": im_reward, 
             "velocity_reward": vel_reward,
             "upright_reward": upright_reward,
             "muscle_effort": muscle_effort,
-            "motor_effort": motor_effort,
+            "ankle_delta_penalty": ankle_delta_penalty,
             "total_reward": reward
         }
         return reward
@@ -220,13 +235,21 @@ class MyoLegsGAIL(MyoLegsGailTask):
     def compute_muscle_effort(self, action: np.ndarray) -> float:
         """Computes effort penalty for biological muscles."""
         if action is None: return 0.0
-        # self.muscle_idx are the indices in the full action vector
+        # If not active gains, the entire action vector is biological muscles
+        if not self.active_gains:
+            return np.sum(np.square(action))
+        
+        # Otherwise, use the indices
         muscle_acts = action[self.muscle_idx]
         return np.sum(np.square(muscle_acts))
 
     def compute_motor_effort(self, action: np.ndarray) -> float:
         """Computes effort penalty for prosthetic motors."""
         if action is None: return 0.0
+        # If not active gains, motors are not in the action space
+        if not self.active_gains:
+            return 0.0
+            
         motor_acts = action[self.motor_idx]
         return np.sum(np.square(motor_acts))
 

@@ -18,6 +18,11 @@ reward_specs:
   "w_vel": 0.2
   "w_upright": 0.1
   "w_energy": 0.1
+  "w_ankle_delta": 0.01
+
+# Impedance Control
+impedance_control: True
+active_gains: True
 
 #### Task Configs
 resampling_interval: 100

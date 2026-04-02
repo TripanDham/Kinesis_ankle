@@ -1,9 +1,8 @@
 # Paths
-smpl_data_dir: "data/smpl"
 motion_file: "/media/tripan/Data/DDP/amputee_data/training_data"
-expert_buffer_path: "/media/tripan/Data/DDP/Kinesis_prosthetic/data/buffers/expert_buffer.pth"
+expert_buffer_path: "/media/tripan/Data/DDP/Kinesis_ankle/data/expert_trajectories.pth"
 initial_pose_file: "/media/tripan/Data/DDP/amputee_data/training_data/processed_motions.joblib"
-xml_path: "/media/tripan/Data/DDP/Kinesis_prosthetic/data/xml/myolegs_OSL_KA.xml"
+xml_path: "/media/tripan/Data/DDP/Kinesis_ankle/data/xml/myoLeg26_OSL_A.xml"
 
 # motion_file: "/home/stadmn/coding/tripan/data/training_data"
 # expert_buffer_path: "/home/stadmn/coding/tripan/Kinesis_prosthetic/data/expert_trajectories.pth"

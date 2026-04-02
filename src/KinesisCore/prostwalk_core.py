@@ -49,8 +49,6 @@ class ProstWalkCore:
             np.ones(self._num_unique_motions) / self._num_unique_motions
         )
         self._velocity_groups = self._bunch_by_velocity()
-        # SMPL features are disabled
-        self.fk_model = None
 
     def load_data(self, filepath: str) -> None:
         """
@@ -129,14 +127,23 @@ class ProstWalkCore:
         pelvis_quat = pelvis_rot_mujoco.as_quat()  # [x, y, z, w]
         
         if mu_joint_names is not None:
-             # Identify actual hinges/slides vs the root freejoint
-             # In MuJoCo, root is typically index 0 and has 'root' in the name
-             real_joint_names = [n for n in mu_joint_names if 'root' not in n.lower()]
+             # Identify actual hinges/slides vs the root joints
+             # For OSL_A, root joints are pelvis_tx/ty/tz and pelvis_tilt/list/rotation
+             root_names = ['pelvis_tx', 'pelvis_ty', 'pelvis_tz', 'pelvis_tilt', 'pelvis_list', 'pelvis_rotation']
+             real_joint_names = [n for n in mu_joint_names if n not in root_names and 'root' not in n.lower()]
              joint_angles = np.zeros((len(df), len(real_joint_names)), dtype=np.float32)
              
+             # Name mapping for OSL joints (Expert .mot vs MuJoCo model)
+             name_map = {
+                 'osl_ankle_angle_r': 'ankle_angle_r',
+                 'osl_knee_angle_r': 'knee_angle_r'
+             }
+             
              for i, mu_name in enumerate(real_joint_names):
-                  if mu_name in df.columns:
-                       joint_angles[:, i] = df[mu_name].values * unit_scale
+                  # Check for direct match or mapped match
+                  col_name = name_map.get(mu_name, mu_name)
+                  if col_name in df.columns:
+                       joint_angles[:, i] = df[col_name].values * unit_scale
                   else:
                        # Handle cases like socket joints that might be in model but not in .mot
                        pass 
@@ -147,11 +154,22 @@ class ProstWalkCore:
             joint_angles = df[joint_cols].values * unit_scale
         
         # Combine into qpos-like structure for ProstWalkCore
-        # Note: pelvis_quat is typically [x, y, z, w]. 
-        # MuJoCo uses [w, x, y, z].
-        pelvis_quat_mj = np.roll(pelvis_quat, 1, axis=1) # [x, y, z, w] -> [w, x, y, z]
+        # Detect if we are using a freejoint (7D) or hinge-based root (6D)
+        # myoLeg26_OSL_A uses hinge-based root (pelvis_tx/ty/tz, pelvis_tilt/list/rotation)
+        is_hinge_root = 'pelvis_tilt' in mu_joint_names if mu_joint_names else False
         
-        qpos = np.concatenate([pelvis_trans, pelvis_quat_mj, joint_angles], axis=1)
+        if is_hinge_root:
+            # Hinge-based root: [tx, ty, tz, tilt, list, rot, joints...]
+            # Rotated Euler angles are already in pelvis_euler (but we need to ensure they match internal MuJoCo order)
+            # The R_frame * pelvis_rot_opensim rotation already produced pelvis_rot_mujoco
+            # Let's extract Euler angles from the rotated MuJoCo rotation
+            pelvis_euler_mj = pelvis_rot_mujoco.as_euler('xyz').astype(np.float32)
+            qpos = np.concatenate([pelvis_trans, pelvis_euler_mj, joint_angles], axis=1)
+        else:
+            # Freejoint-based root: [tx, ty, tz, qw, qx, qy, qz, joints...]
+            # MuJoCo uses [w, x, y, z].
+            pelvis_quat_mj = np.roll(pelvis_quat, 1, axis=1) # [x, y, z, w] -> [w, x, y, z]
+            qpos = np.concatenate([pelvis_trans, pelvis_quat_mj, joint_angles], axis=1)
         
         # Compute qvel (from ROTATED translation and orientation)
         dt = 1.0 / fps
@@ -166,24 +184,34 @@ class ProstWalkCore:
             lin_vel[:, 0] += motion_speed
         
         # 2. Pelvis angular velocity (world frame)
-        # pelvis_quat is [x, y, z, w] from sRot (already rotated)
-        r = sRot.from_quat(pelvis_quat)
-        r1 = r[:-1]
-        r2 = r[1:]
-        # Local angular velocity: r1.inv() * r2
-        rel_rot = r1.inv() * r2
-        ang_vel_local = rel_rot.as_rotvec() / dt
-        # Convert to world frame: omega_world = r1.apply(omega_local)
-        ang_vel = r1.apply(ang_vel_local)
+        if is_hinge_root:
+            # For hinges, angular velocity is just the diff of Euler angles
+            ang_vel = np.diff(pelvis_euler_mj, axis=0) / dt
+            # Match length
+            ang_vel = np.concatenate([ang_vel, ang_vel[-1:]], axis=0)
+        else:
+            # For freejoint, convert quaternion diff to angular velocity
+            r = sRot.from_quat(pelvis_quat)
+            r1 = r[:-1]
+            r2 = r[1:]
+            # Local angular velocity: r1.inv() * r2
+            rel_rot = r1.inv() * r2
+            ang_vel_local = rel_rot.as_rotvec() / dt
+            # Convert to world frame: omega_world = r1.apply(omega_local)
+            ang_vel = r1.apply(ang_vel_local)
+            # Match length
+            ang_vel = np.concatenate([ang_vel, ang_vel[-1:]], axis=0)
         
         # 3. Joint velocities
         joint_vel = np.diff(joint_angles, axis=0) / dt
+        joint_vel = np.concatenate([joint_vel, joint_vel[-1:]], axis=0)
+        
+        # Match lengths if needed (before concatenation)
+        if len(lin_vel) < len(qpos):
+             lin_vel = np.concatenate([lin_vel, lin_vel[-1:]], axis=0)
         
         # Combine into qvel-like structure (lin(3), ang(3), joints(N))
         qvel = np.concatenate([lin_vel, ang_vel, joint_vel], axis=1)
-        
-        # Match length by padding the last frame
-        qvel = np.concatenate([qvel, qvel[-1:]], axis=0)
         
         return {
             'qpos': qpos.astype(np.float32),
@@ -428,60 +456,6 @@ class ProstWalkCore:
                 res[curr_id] = fk_motion
                 continue
 
-            fps = motion_data.get("fps", 30)
-            motion_length = motion_data["pose_aa"].shape[0]
-
-            trans = (
-                to_torch(
-                    motion_data["trans"]
-                    if "trans" in motion_data
-                    else motion_data["trans_orig"]
-                ).float().clone()
-            )
-
-            pose_aa = to_torch(motion_data["pose_aa"]).float().clone()
-            if pose_aa.shape[1] == 156:
-                pose_aa = torch.cat(
-                    [pose_aa[:, :66], torch.zeros((pose_aa.shape[0], 6))], dim=1
-                ).reshape(-1, 24, 3)
-            elif pose_aa.shape[1] == 72:
-                pose_aa = pose_aa.reshape(-1, 24, 3)
-
-            B, J, N = pose_aa.shape
-
-            if config.randomize_heading:
-                random_rot = np.zeros(3)
-                random_rot[2] = np.pi * (2 * np.random.random() - 1.0)
-                random_heading_rot = sRot.from_euler("xyz", random_rot)
-                pose_aa[:, 0, :] = torch.tensor(
-                    (
-                        random_heading_rot * sRot.from_rotvec(pose_aa[:, 0, :])
-                    ).as_rotvec()
-                )
-                trans = torch.matmul(
-                    trans.float(),
-                    torch.from_numpy(random_heading_rot.as_matrix().T).float(),
-                )
-
-            trans, trans_fix = self.fix_trans_height(
-                pose_aa,
-                trans
-            )
-
-            self.fk_model.update_model(betas=torch.zeros((1,10)), dt = 1/fps)
-
-            fk_motion = self.fk_model.fk_batch(
-                pose_aa[None,],
-                trans[None,],
-            )
-
-            fk_motion = EasyDict(
-                {k: v[0] if torch.is_tensor(v) else v for k, v in fk_motion.items()}
-            )
-
-            fk_motion.pose_aa = pose_aa
-            res[curr_id] = fk_motion
-
         if queue is not None:
             queue.put(res)
         else:
@@ -555,23 +529,6 @@ class ProstWalkCore:
         """
         return self._num_unique_motions
     
-    def fix_trans_height(
-            self,
-            pose_aa: torch.Tensor,
-            trans: torch.Tensor,
-    ) -> Tuple[torch.Tensor, float]:
-        with torch.no_grad():
-            frame_check = 30
-            mesh_parser = self.fk_model.smpl_parser
-            vertices_curr, _ = mesh_parser.get_joints_verts(
-                pose_aa[:frame_check], th_trans=trans[:frame_check]
-            )
-
-            diff_fix = vertices_curr[:frame_check, ..., -1].min(dim=-1).values.min()
-
-            trans[..., -1] -= diff_fix
-
-            return trans, diff_fix
         
     def _calc_frame_blend(self, time, len, num_frames, dt):
         time = time.copy()

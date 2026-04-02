@@ -10,3 +10,15 @@ WARNING: mju_openResource: unknown file 'data/xml/assets/myolegs_chain_OSL_KA.xm
 Fri Mar 20 19:48:09 2026
 WARNING: mju_openResource: unknown file '/media/tripan/Data/DDP/Kinesis_prosthetic/src/env/assets/myolegs_OSL_KA.xml'
 
+Thu Apr  2 21:16:23 2026
+WARNING: mju_openResource: unknown file 'data/xml/../terrain_config.xml'
+
+Fri Apr  3 00:00:06 2026
+WARNING: mju_openResource: unknown file '/media/tripan/Data/DDP/Kinesis_prosthetic/data/xml/myoLegs_OSL_KA.xml'
+
+Fri Apr  3 00:01:12 2026
+WARNING: mju_openResource: unknown file '/media/tripan/Data/DDP/Kinesis_prosthetic/data/xml/myoLegs_OSL_KA.xml'
+
+Fri Apr  3 00:29:44 2026
+WARNING: mju_openResource: unknown file '/media/tripan/Data/DDP/Kinesis_prosthetic/data/xml/myoLegs_OSL_KA.xml'
+

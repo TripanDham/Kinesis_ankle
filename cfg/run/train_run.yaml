@@ -14,9 +14,8 @@ random_sample: False
 proprioceptive_inputs: ["root_height", "root_tilt", "local_body_pos", "local_body_rot", "local_body_vel", "local_body_ang_vel", "feet_contacts"]
 task_inputs: ["diff_local_body_pos", "diff_local_vel", "local_ref_body_pos"]
 
-xml_path: "data/xml/myolegs.xml"
+xml_path: "data/xml/myoLeg26_OSL_A.xml"
 motion_file: "data/kit_train_motion_dict.pkl"
-smpl_data_dir: "data/smpl"
 initial_pose_file: "data/initial_pose/initial_pose_train.pkl"
 expert_path: ""
 

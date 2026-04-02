@@ -45,8 +45,8 @@ class LoggerRL:
         self.max_episode_reward = max(self.max_episode_reward, self.episode_reward)
 
     def end_sampling(self):
-        self.avg_episode_len = self.num_steps / self.num_episodes
-        self.avg_episode_reward = self.total_reward / self.num_episodes
+        self.avg_episode_len = self.num_steps / self.num_episodes if self.num_episodes > 0 else 0.0
+        self.avg_episode_reward = self.total_reward / self.num_episodes if self.num_episodes > 0 else 0.0
 
     @classmethod
     def merge(cls, logger_list):
