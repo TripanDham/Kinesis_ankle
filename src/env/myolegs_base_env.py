@@ -184,3 +184,7 @@ class BaseEnv(gym.Env):
         elif chr(keycode) == "F":
             self.follow = not self.follow
             print(f"Follow {self.follow}")
+        elif chr(keycode) == "G":
+            if hasattr(self, 'expert_ghost'):
+                self.expert_ghost.enabled = not self.expert_ghost.enabled
+                print(f"Expert ghost {'ON' if self.expert_ghost.enabled else 'OFF'}")

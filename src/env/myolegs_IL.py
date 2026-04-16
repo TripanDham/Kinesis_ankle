@@ -21,6 +21,7 @@ sys.path.append(str(path_root))
 
 from src.env.myolegs_gail_task import MyoLegsGailTask
 from src.utils.visual_capsule import add_visual_capsule
+from src.utils.expert_ghost import ExpertGhost
 from src.env.myolegs_gail_env import get_actuator_names
 from src.KinesisCore.prostwalk_core import ProstWalkCore
 from gail_airl_ppo.network import GAILDiscrim
@@ -62,6 +63,11 @@ class MyoLegsGAIL(MyoLegsGailTask):
         ).to(cfg.run.get("device", "cpu"))
         
         self.optim_disc = Adam(self.gail_disc.parameters(), lr=cfg.env.get("gail_lr", 1e-4))
+        
+        # Expert ghost visualization
+        self.expert_ghost = ExpertGhost(self.mj_model, lateral_offset=-1.5)
+        self.expert_motion_time = 0.0
+        self.expert_motion_id = None
 
     def _setup_obs_mapping(self):
         """Pre-calculates qpos/qvel indices for the 30D observation vector."""
@@ -90,7 +96,8 @@ class MyoLegsGAIL(MyoLegsGailTask):
         joint_names = [self.mj_model.joint(i).name for i in range(self.mj_model.njnt)]
         self.motion_lib = ProstWalkCore(
             self.cfg.run, 
-            joint_names=joint_names
+            joint_names=joint_names,
+            mj_model=self.mj_model
         )
         self.motion_lib.load_motions(self.cfg.run)
         logger.info(f"Motion library initialized with {len(self.motion_lib.curr_motion_keys)} motions.")
@@ -142,6 +149,7 @@ class MyoLegsGAIL(MyoLegsGailTask):
         """
         try:
             stand_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_KEY, 'stand')
+            logger.info(f"Loading 'stand' keyframe (id: {stand_id})")
             if stand_id != -1:
                 self.mj_data.qpos[:] = self.mj_model.key_qpos[stand_id]
                 self.mj_data.qvel[:] = self.mj_model.key_qvel[stand_id]
@@ -149,12 +157,12 @@ class MyoLegsGAIL(MyoLegsGailTask):
                 # Fallback if 'stand' key is missing
                 self.mj_data.qpos[:] = 0
                 self.mj_data.qvel[:] = 0
-                self.mj_data.qpos[2] = 0.95 # Generic height
+                self.mj_data.qpos[1] = 0.91 # Standing height (pelvis_ty, Y-up model)
         except Exception as e:
             logger.warning(f"Could not load 'stand' keyframe: {e}. Using default pose.")
             self.mj_data.qpos[:] = 0
             self.mj_data.qvel[:] = 0
-            self.mj_data.qpos[2] = 0.95
+            self.mj_data.qpos[1] = 0.91
             
         mujoco.mj_kinematics(self.mj_model, self.mj_data)
 
@@ -171,13 +179,58 @@ class MyoLegsGAIL(MyoLegsGailTask):
             self.target_speed = np.random.choice(self.motion_lib.available_speeds)
             
         self.biomechanics_data = []
+        
+        # Pick an expert motion for the ghost visualization
+        if hasattr(self, 'motion_lib') and len(self.motion_lib.available_speeds) > 0:
+            # Try to get a motion matching target speed
+            try:
+                motion_ids = self.motion_lib.sample_motions_by_velocity(self.target_speed, n=1)
+                self.expert_motion_id = motion_ids[0]
+                self.expert_motion_time = 0.0
+            except Exception:
+                self.expert_motion_id = 0
+                self.expert_motion_time = 0.0
+        
         logger.info(f"Target speed for this episode: {self.target_speed}")
 
     def compute_task_obs(self) -> np.ndarray:
         return np.empty(0, dtype=self.dtype)
 
     def draw_task(self):
-        pass
+        """Draws expert ghost model in the viewer each render frame."""
+        if self.headless or self.viewer is None:
+            return
+        if not self.expert_ghost.enabled:
+            # Clear any leftover ghost geoms when disabled
+            with self.viewer.lock():
+                self.viewer._user_scn.ngeom = 0
+            return
+        
+        # Get current expert reference qpos from the motion library
+        try:
+            if self.expert_motion_id is not None:
+                motion_state = self.motion_lib.get_motion_state_intervaled(
+                    np.array([self.expert_motion_id]),
+                    np.array([self.expert_motion_time])
+                )
+                expert_qpos = motion_state['qpos'][0]
+                self.expert_ghost.update_pose(expert_qpos)
+                
+                # Offset ghost to be beside the agent
+                agent_root = self.mj_data.qpos[0:3].copy()
+                self.expert_ghost.apply_offset(agent_root)
+                
+                # Render ghost into user scene
+                with self.viewer.lock():
+                    self.expert_ghost.draw(self.viewer)
+                
+                # Advance expert motion time
+                self.expert_motion_time += self.dt
+                motion_len = self.motion_lib.get_motion_length(np.array([self.expert_motion_id]))[0]
+                if self.expert_motion_time > motion_len:
+                    self.expert_motion_time = 0.0
+        except Exception as e:
+            pass  # Silently skip if motion state is unavailable
 
     def create_task_visualization(self):
         pass
@@ -272,7 +325,8 @@ class MyoLegsGAIL(MyoLegsGailTask):
 
     def compute_reset(self) -> Tuple[bool, bool]:
         """Basic stability and time-based reset."""
-        fell = self.mj_data.qpos[2] < 0.5
+        # Y-up model: pelvis_ty (index 1) is the height
+        fell = self.mj_data.qpos[1] < 0.5 
         truncated = self.cur_t >= self.max_episode_length
         return fell, truncated
 

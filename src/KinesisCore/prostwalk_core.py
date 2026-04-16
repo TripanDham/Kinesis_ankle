@@ -27,6 +27,7 @@ import pandas as pd
 from pathlib import Path
 
 from scipy.spatial.transform import Rotation as sRot
+import mujoco
 import random
 random.seed(0)
 from src.utils.torch_utils import to_torch
@@ -38,10 +39,11 @@ torch.set_num_threads(1)
 
 class ProstWalkCore:
 
-    def __init__(self, config, joint_names=None):
+    def __init__(self, config, joint_names=None, mj_model=None):
         self.config = config
         self.dtype = np.float32
         self.joint_names = joint_names
+        self._mj_model = mj_model
 
         self.load_data(config.motion_file)
         self._curr_motion_ids = np.arange(self._num_unique_motions)
@@ -105,26 +107,26 @@ class ProstWalkCore:
         
         # ============================================================
         # Frame rotation: OpenSim Y-up -> MuJoCo Z-up
-        # The original rotation applied (to go from MuJoCo to OpenSim) was:
-        #   1st: Rx(-π/2)  2nd: Ry(π/2)
-        # So the INVERSE (OpenSim -> MuJoCo) is:
-        #   1st: Ry(-π/2)  2nd: Rx(π/2)
+        # DISABLED: The XML model uses a body-level quat on the pelvis
+        # to handle Y-up -> Z-up visually. Joint qpos values remain in
+        # the OpenSim Y-up local frame, so no rotation is needed here.
         # ============================================================
         # R_y_neg = sRot.from_euler('y', -np.pi/2)
-        R_x_pos = sRot.from_euler('x', np.pi/2)
-        R_frame = R_x_pos
-        R_frame_matrix = R_frame.as_matrix()  # 3x3
+        # R_x_pos = sRot.from_euler('x', np.pi/2)
+        # R_frame = R_x_pos
+        # R_frame_matrix = R_frame.as_matrix()  # 3x3
         
-        # --- Rotate Pelvis Translation ---
+        # --- Pelvis Translation (raw OpenSim Y-up, matches model local frame) ---
         pelvis_trans_raw = df[['pelvis_tx', 'pelvis_ty', 'pelvis_tz']].values
-        pelvis_trans = (R_frame_matrix @ pelvis_trans_raw.T).T  # (N, 3)
+        pelvis_trans = pelvis_trans_raw  # No rotation needed
+        # pelvis_trans = (R_frame_matrix @ pelvis_trans_raw.T).T  # (N, 3) — old rotated version
         
-        # --- Rotate Pelvis Orientation ---
-        # Convert euler angles to quaternions in OpenSim frame, then rotate into MuJoCo frame
+        # --- Pelvis Orientation (raw OpenSim Euler angles) ---
         pelvis_euler = df[['pelvis_tilt', 'pelvis_list', 'pelvis_rotation']].values * unit_scale
-        pelvis_rot_opensim = sRot.from_euler('xyz', pelvis_euler)
-        pelvis_rot_mujoco = R_frame * pelvis_rot_opensim  # Pre-multiply by frame rotation
-        pelvis_quat = pelvis_rot_mujoco.as_quat()  # [x, y, z, w]
+        # Old rotated version:
+        # pelvis_rot_opensim = sRot.from_euler('xyz', pelvis_euler)
+        # pelvis_rot_mujoco = R_frame * pelvis_rot_opensim
+        # pelvis_quat = pelvis_rot_mujoco.as_quat()  # [x, y, z, w]
         
         if mu_joint_names is not None:
              # Identify actual hinges/slides vs the root joints
@@ -143,10 +145,27 @@ class ProstWalkCore:
                   # Check for direct match or mapped match
                   col_name = name_map.get(mu_name, mu_name)
                   if col_name in df.columns:
-                       joint_angles[:, i] = df[col_name].values * unit_scale
+                       val = df[col_name].values * unit_scale
+                       # Flip sign for knee joints if needed
+                       if col_name in ['knee_angle_r', 'knee_angle_l', 'osl_knee_angle_r']:
+                            val = -val
+                       joint_angles[:, i] = val
                   else:
-                       # Handle cases like socket joints that might be in model but not in .mot
-                       pass 
+                       # Joint not in .mot file (e.g. coupled knee translations, muscle wrapping points).
+                       # Use the 'stand' keyframe default value if available, otherwise use joint range midpoint.
+                       jnt_id = mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_JOINT, mu_name)
+                       if jnt_id >= 0:
+                           qpos_adr = self._mj_model.jnt_qposadr[jnt_id]
+                           # Try stand keyframe first
+                           stand_id = mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_KEY, 'stand')
+                           if stand_id >= 0:
+                               default_val = self._mj_model.key_qpos[stand_id, qpos_adr]
+                           elif self._mj_model.jnt_limited[jnt_id]:
+                               # Use midpoint of joint range
+                               default_val = 0.5 * (self._mj_model.jnt_range[jnt_id, 0] + self._mj_model.jnt_range[jnt_id, 1])
+                           else:
+                               default_val = 0.0
+                           joint_angles[:, i] = default_val
         else:
             # Fallback to old behavior: extract everything except pelvis
             exclude = ['time', 'pelvis_tilt', 'pelvis_list', 'pelvis_rotation', 'pelvis_tx', 'pelvis_ty', 'pelvis_tz']
@@ -160,20 +179,20 @@ class ProstWalkCore:
         
         if is_hinge_root:
             # Hinge-based root: [tx, ty, tz, tilt, list, rot, joints...]
-            # Rotated Euler angles are already in pelvis_euler (but we need to ensure they match internal MuJoCo order)
-            # The R_frame * pelvis_rot_opensim rotation already produced pelvis_rot_mujoco
-            # Let's extract Euler angles from the rotated MuJoCo rotation
-            pelvis_euler_mj = pelvis_rot_mujoco.as_euler('xyz').astype(np.float32)
-            qpos = np.concatenate([pelvis_trans, pelvis_euler_mj, joint_angles], axis=1)
+            # Use raw OpenSim Euler angles directly (no rotation needed)
+            qpos = np.concatenate([pelvis_trans, pelvis_euler, joint_angles], axis=1)
         else:
             # Freejoint-based root: [tx, ty, tz, qw, qx, qy, qz, joints...]
-            # MuJoCo uses [w, x, y, z].
+            # MuJoCo uses [w, x, y, z]. Need quaternion conversion.
+            pelvis_rot_opensim = sRot.from_euler('xyz', pelvis_euler)
+            pelvis_quat = pelvis_rot_opensim.as_quat()  # [x, y, z, w]
             pelvis_quat_mj = np.roll(pelvis_quat, 1, axis=1) # [x, y, z, w] -> [w, x, y, z]
             qpos = np.concatenate([pelvis_trans, pelvis_quat_mj, joint_angles], axis=1)
+
         
-        # Compute qvel (from ROTATED translation and orientation)
+        # Compute qvel (from raw OpenSim-frame translation and orientation)
         dt = 1.0 / fps
-        # 1. Pelvis linear velocity (world frame, already in MuJoCo frame)
+        # 1. Pelvis linear velocity (OpenSim Y-up local frame)
         lin_vel = np.diff(pelvis_trans, axis=0) / dt
         
         # Extract nominal speed from filename to add to forward velocity
@@ -183,10 +202,10 @@ class ProstWalkCore:
             motion_speed = float(match.group(1).replace('p', '.'))
             lin_vel[:, 0] += motion_speed
         
-        # 2. Pelvis angular velocity (world frame)
+        # 2. Pelvis angular velocity (OpenSim local frame)
         if is_hinge_root:
             # For hinges, angular velocity is just the diff of Euler angles
-            ang_vel = np.diff(pelvis_euler_mj, axis=0) / dt
+            ang_vel = np.diff(pelvis_euler, axis=0) / dt
             # Match length
             ang_vel = np.concatenate([ang_vel, ang_vel[-1:]], axis=0)
         else:

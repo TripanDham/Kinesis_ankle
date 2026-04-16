@@ -174,7 +174,10 @@ class MyoLegsGailEnv(BaseEnv):
 
         obs_dict =  compute_self_observations(body_pos, body_rot, body_vel, body_ang_vel)
         
-        root_rot = sRot.from_quat(self.mj_data.qpos[[4, 5, 6, 3]])
+        # Get root orientation from body xquat (world frame, works for both freejoint and hinge root)
+        # body_rot[0, 0] is the root body's quaternion in [w, x, y, z] format (MuJoCo convention)
+        root_quat_wxyz = body_rot[0, 0]
+        root_rot = sRot.from_quat(root_quat_wxyz[[1, 2, 3, 0]])  # Convert to [x, y, z, w] for scipy
         root_rot_euler = root_rot.as_euler("xyz")
 
         myolegs_obs = OrderedDict()
@@ -431,11 +434,12 @@ class MyoLegsGailEnv(BaseEnv):
         """
         Initializes the MyoLegs environment. In the environment class, this defaults to
         setting the agent to a default position.
+        Note: For hinge-based root (OSL_A), height is at index 1 (pelvis_ty, Y-up).
+              For freejoint root (OSL_KA), height is at index 2 and quat at 3:7.
         """
         self.mj_data.qpos[:] = 0
         self.mj_data.qvel[:] = 0
-        self.mj_data.qpos[2] = 0.94
-        self.mj_data.qpos[3:7] = np.array([1.0, 0.0, 0.0, 0.0])   
+        self.mj_data.qpos[1] = 0.91  # pelvis_ty = height (Y-up model)
 
     def reset_myolegs(self):
         self.step_counter = 0

@@ -89,7 +89,11 @@ def generate_trajectories(data_dir, output_path):
             if col in df.columns:
                 # Scale by degrees-to-rad UNLESS it's a translation column
                 scale = 1.0 if col in translation_cols else unit_scale
-                raw_pos[:, i] = df[col].values * scale
+                val = df[col].values * scale
+                # Flip sign for knee joints to match MuJoCo convention (Flexion < 0)
+                if col in ['knee_angle_r', 'knee_angle_l']:
+                    val = -val
+                raw_pos[:, i] = val
 
         # 2. Extract angles for observation (13D: Exclude pelvis_tx/ty/tz at 0,1,2)
         angles = raw_pos[:, 3:16] # (num_frames, 13)
