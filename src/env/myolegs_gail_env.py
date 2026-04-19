@@ -225,21 +225,31 @@ class MyoLegsGailEnv(BaseEnv):
     
     def get_body_linear_vel(self):
         """
-        Returns the linear velocity of the agent's body parts.
+        Returns the linear velocity of the agent's body parts in World Frame.
         """
-        return self.mj_data.sensordata[:self.num_vel_limit].reshape(self.num_bodies, 3).copy()
+        lin_vels = []
+        for body_idx in self.robot_body_idxes:
+            res = np.zeros(6)
+            mujoco.mj_objectVelocity(self.mj_model, self.mj_data, mujoco.mjtObj.mjOBJ_BODY, body_idx, res, 0)
+            lin_vels.append(res[3:])
+        return np.stack(lin_vels)
     
     def get_body_angular_vel(self):
         """
-        Returns the angular velocity of the agent's body parts.
+        Returns the angular velocity of the agent's body parts in World Frame.
         """
-        return self.mj_data.sensordata[self.num_vel_limit:2 * self.num_vel_limit].reshape(self.num_bodies, 3).copy()
+        ang_vels = []
+        for body_idx in self.robot_body_idxes:
+            res = np.zeros(6)
+            mujoco.mj_objectVelocity(self.mj_model, self.mj_data, mujoco.mjtObj.mjOBJ_BODY, body_idx, res, 0)
+            ang_vels.append(res[:3])
+        return np.stack(ang_vels)
     
     def get_touch(self):
         """
         Returns the touch sensor readings of the agent.
         """
-        return self.mj_data.sensordata[self.num_vel_limit * 2:].copy()
+        return self.mj_data.sensordata.copy()
         
     def get_qpos(self):
         """

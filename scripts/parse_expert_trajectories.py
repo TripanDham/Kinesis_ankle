@@ -8,7 +8,7 @@ from tqdm import tqdm
 import argparse
 import re
 
-# Observation Layout (30D):
+# Observation Layout (30D) expected by the agent:
 # 0-2: Root orientation (tilt, list, rot)
 # 3-5: Right Hip (flexion, adduction, rotation)
 # 6: Right Knee (knee_angle_r)
@@ -16,34 +16,34 @@ import re
 # 8-10: Left Hip (flexion, adduction, rotation)
 # 11: Left Knee (knee_angle_l)
 # 12: Left Ankle (ankle_angle_l)
-# 13-18: Root Velocity (Linear 3, Angular 3)
-# 19-28: Joint Velocities (Right 5, Left 5)
+# 13-18: Root Velocity (tx, ty, tz, tp, tl, tr)
+# 19-28: Joint Velocities (same order as angles)
 # 29: Target Speed
 
 JOINT_COLUMNS = [
-    'pelvis_tx', 'pelvis_ty', 'pelvis_tz', 'pelvis_tilt', 'pelvis_list', 'pelvis_rotation',
-    'hip_flexion_r', 'hip_adduction_r', 'hip_rotation_r', 'knee_angle_r', 'ankle_angle_r',
-    'hip_flexion_l', 'hip_adduction_l', 'hip_rotation_l', 'knee_angle_l', 'ankle_angle_l'
+    'pelvis_tx', 'pelvis_ty', 'pelvis_tz',         # 0, 1, 2
+    'pelvis_tilt', 'pelvis_list', 'pelvis_rotation', # 3, 4, 5
+    'hip_flexion_r', 'hip_adduction_r', 'hip_rotation_r', 'knee_angle_r', 'ankle_angle_r', # 6, 7, 8, 9, 10
+    'hip_flexion_l', 'hip_adduction_l', 'hip_rotation_l', 'knee_angle_l', 'ankle_angle_l'  # 11, 12, 13, 14, 15
 ]
 
-# Mapping specifically for OSL model names
-MOT_TO_OBS = {
-    'osl_knee_angle_r': 'knee_angle_r',
-    'osl_ankle_angle_r': 'ankle_angle_r',
-}
-
 def extract_speed(filename):
-    """Extracts speed from filename like tf01_0p6_01_rotated_ik.mot"""
     match = re.search(r'_(\d+)p(\d+)_', filename)
     if match:
         return float(f"{match.group(1)}.{match.group(2)}")
     return 0.0
 
+def find_col(df_cols, target):
+    if target in df_cols:
+        return target
+    for c in df_cols:
+        if target in c:
+            return c
+    return None
+
 def parse_mot(filepath):
-    """Parses .mot file and returns a dataframe + metadata."""
     with open(filepath, 'r') as f:
         lines = f.readlines()
-    
     header_end = 0
     in_degrees = True
     for i, line in enumerate(lines):
@@ -52,80 +52,80 @@ def parse_mot(filepath):
         if 'endheader' in line:
             header_end = i + 1
             break
-            
     df = pd.read_csv(filepath, sep='\t', skiprows=header_end)
     if len(df.columns) <= 1:
-        # Retry with space separator
         df = pd.read_csv(filepath, sep='\s+', skiprows=header_end)
-        
     return df, in_degrees
 
 def generate_trajectories(data_dir, output_path, target_freq=30.0):
     mot_files = sorted(list(Path(data_dir).glob("*.mot")))
     print(f"Found {len(mot_files)} .mot files.")
-    
     target_dt = 1.0 / target_freq
-    print(f"Resampling to {target_freq} Hz (dt={target_dt:.4f}s)")
-    
     trajectories = []
     
     for mot_file in tqdm(mot_files):
         filename = mot_file.name
-        # Skip joblib if mistakenly found
         if filename.endswith(".joblib"): continue
         
         speed = extract_speed(filename)
         df, in_degrees = parse_mot(str(mot_file))
-        
-        num_frames = len(df)
-        if num_frames < 2: continue
+        if len(df) < 5: continue
         
         times = df['time'].values
-        dt = times[1] - times[0]
-        
         unit_scale = np.pi / 180.0 if in_degrees else 1.0
         
-        # 1. Extract raw positions for all 16 columns (6 root + 10 joints)
-        raw_pos = np.zeros((num_frames, len(JOINT_COLUMNS)), dtype=np.float32)
-        translation_cols = ['pelvis_tx', 'pelvis_ty', 'pelvis_tz']
-        for i, col in enumerate(JOINT_COLUMNS):
-            if col in df.columns:
-                # Scale by degrees-to-rad UNLESS it's a translation column
-                scale = 1.0 if col in translation_cols else unit_scale
-                val = df[col].values * scale
-                # Flip sign for knee joints to match MuJoCo convention (Flexion < 0)
-                if col in ['knee_angle_r', 'knee_angle_l']:
+        # 1. Map columns and scale
+        raw_pos = np.zeros((len(df), 16), dtype=np.float32)
+        for i, target in enumerate(JOINT_COLUMNS):
+            col_name = find_col(df.columns, target)
+            if col_name:
+                scale = 1.0 if 'pelvis_t' in target else unit_scale
+                val = df[col_name].values * scale
+                
+                # Biomechanical Flip: OpenSim (+) -> MuJoCo (-) Flexion
+                if 'knee' in target or 'ankle' in target:
                     val = -val
+                
                 raw_pos[:, i] = val
 
-        # 2. Resample raw positions to target frequency
-        new_times = np.arange(times[0], times[-1], target_dt)
-        resampled_raw_pos = np.zeros((len(new_times), len(JOINT_COLUMNS)), dtype=np.float32)
+        # 2. 180-Degree Y-Rotation (Turn character around if walking in -X)
+        if raw_pos[-1, 0] < raw_pos[0, 0]:
+            raw_pos[:, 0] = -raw_pos[:, 0]  # tx
+            raw_pos[:, 2] = -raw_pos[:, 2]  # tz
+            raw_pos[:, 3] = -raw_pos[:, 3]  # pelvis_tilt
+            raw_pos[:, 4] = -raw_pos[:, 4]  # pelvis_list
+            raw_pos[:, 5] = raw_pos[:, 5] + np.pi # pelvis_rotation
         
-        for i in range(len(JOINT_COLUMNS)):
+        # 3. Heading Normalization (Center Yaw around 0)
+        # We want the average heading to be 0 so the agent can imitate it without an offset bias
+        avg_yaw = np.mean(raw_pos[:, 5])
+        raw_pos[:, 5] = raw_pos[:, 5] - avg_yaw
+        
+        # 4. Resample to 30Hz
+        new_times = np.arange(times[0], times[-1], target_dt)
+        resampled_raw_pos = np.zeros((len(new_times), 16), dtype=np.float32)
+        for i in range(16):
             resampled_raw_pos[:, i] = np.interp(new_times, times, raw_pos[:, i])
             
-        # 3. Extract angles for observation (13D: Exclude pelvis_tx/ty/tz at 0,1,2)
-        angles = resampled_raw_pos[:, 3:16] # (num_frames, 13)
+        # 5. Construct 30D Observation Frame
+        obs_angles = resampled_raw_pos[:, 3:16]
         
-        # 4. Compute Velocities (16D: Finite difference of resampled positions)
-        resampled_velocities = np.zeros((len(new_times), 16), dtype=np.float32)
-        resampled_velocities[:-1] = np.diff(resampled_raw_pos, axis=0) / target_dt
-        resampled_velocities[-1] = resampled_velocities[-2] # Pad last frame
+        # Velocities: Finite difference (16D)
+        resampled_vels = np.zeros((len(new_times), 16), dtype=np.float32)
+        resampled_vels[:-1] = np.diff(resampled_raw_pos, axis=0) / target_dt
+        resampled_vels[-1] = resampled_vels[-2]
         
-        # 5. Target Speed (1D)
+        # Speed: Target constant (1D)
         speed_col = np.full((len(new_times), 1), speed, dtype=np.float32)
         
-        # 6. Concatenate into Final Observation (30D)
-        # Sequence: Angles (13) + Velocities (16) + Speed (1)
-        obs_traj = np.concatenate([angles, resampled_velocities, speed_col], axis=1) # (T, 30)
-            
+        # Sequence: [Angles 13] + [Vels 16] + [Speed 1] = 30D
+        obs_traj = np.concatenate([obs_angles, resampled_vels, speed_col], axis=1)
+        
         trajectories.append({
             'speed': speed,
             'observation': torch.from_numpy(obs_traj)
         })
 
-    # Save all trajectories
     print(f"Saving {len(trajectories)} trajectories to {output_path}")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     torch.save(trajectories, output_path)
@@ -137,5 +137,4 @@ if __name__ == "__main__":
     parser.add_argument("--output_path", type=str, default="data/expert_trajectories.pth")
     parser.add_argument("--target_freq", type=float, default=30.0)
     args = parser.parse_args()
-    
     generate_trajectories(args.data_dir, args.output_path, args.target_freq)
