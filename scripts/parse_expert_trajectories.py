@@ -63,6 +63,10 @@ def generate_trajectories(data_dir, output_path, target_freq=30.0):
     target_dt = 1.0 / target_freq
     trajectories = []
     
+    # Range constraints to prevent discriminator "cheating" on numerical noise
+    VEL_LIMIT = 20.0 # rad/s. Physiologically reasonable for joints.
+    TRANS_VEL_LIMIT = 5.0 # m/s.
+    
     for mot_file in tqdm(mot_files):
         filename = mot_file.name
         if filename.endswith(".joblib"): continue
@@ -91,13 +95,12 @@ def generate_trajectories(data_dir, output_path, target_freq=30.0):
         # 2. 180-Degree Y-Rotation (Turn character around if walking in -X)
         if raw_pos[-1, 0] < raw_pos[0, 0]:
             raw_pos[:, 0] = -raw_pos[:, 0]  # tx
-            raw_pos[:, 2] = -raw_pos[:, 2]  # tz
+            raw_pos[:, 2] = -raw_pos[:, 2]  # tz (if applicable)
             raw_pos[:, 3] = -raw_pos[:, 3]  # pelvis_tilt
             raw_pos[:, 4] = -raw_pos[:, 4]  # pelvis_list
             raw_pos[:, 5] = raw_pos[:, 5] + np.pi # pelvis_rotation
         
         # 3. Heading Normalization (Center Yaw around 0)
-        # We want the average heading to be 0 so the agent can imitate it without an offset bias
         avg_yaw = np.mean(raw_pos[:, 5])
         raw_pos[:, 5] = raw_pos[:, 5] - avg_yaw
         
@@ -112,7 +115,15 @@ def generate_trajectories(data_dir, output_path, target_freq=30.0):
         
         # Velocities: Finite difference (16D)
         resampled_vels = np.zeros((len(new_times), 16), dtype=np.float32)
-        resampled_vels[:-1] = np.diff(resampled_raw_pos, axis=0) / target_dt
+        diffs = np.diff(resampled_raw_pos, axis=0) / (target_dt + 1e-8)
+        
+        # CLEANING: Clip velocity outliers that cause discriminator collapse
+        # Trans velocities (0,1,2)
+        diffs[:, 0:3] = np.clip(diffs[:, 0:3], -TRANS_VEL_LIMIT, TRANS_VEL_LIMIT)
+        # Angular velocities (3:16)
+        diffs[:, 3:16] = np.clip(diffs[:, 3:16], -VEL_LIMIT, VEL_LIMIT)
+        
+        resampled_vels[:-1] = diffs
         resampled_vels[-1] = resampled_vels[-2]
         
         # Speed: Target constant (1D)

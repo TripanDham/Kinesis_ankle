@@ -12,7 +12,7 @@ logging.getLogger('hydra').setLevel(logging.WARNING)
 @hydra.main(config_path="../cfg", config_name="config")
 def main(cfg: DictConfig):
     print("\n" + "="*85)
-    print(" OBSERVATION MATCHING DIAGNOSTIC TOOL (FULL REPORT)")
+    print(" OBSERVATION MATCHING DIAGNOSTIC TOOL (NORMALIZED REPORT)")
     print("="*85)
 
     # 1. Load Expert Buffer
@@ -24,15 +24,19 @@ def main(cfg: DictConfig):
     print(f"Loading Expert Buffer: {expert_path}")
     expert_data = torch.load(expert_path, map_location='cpu')
     
-    expert_obs = []
+    expert_obs_frames = []
     for traj in expert_data:
         obs = traj['observation']
         if torch.is_tensor(obs):
             obs = obs.numpy()
-        if obs.shape[1] > 30:
-            obs = obs[:, -30:] # Assume [Batch, History*30] -> grab last frame
-        expert_obs.append(obs)
-    expert_obs = np.concatenate(expert_obs, axis=0)
+        # The buffer has 30D frames possibly repeated by history.
+        # We want the base 30D features for statistics.
+        # Assuming [T, 30*History]
+        num_frames = obs.shape[0]
+        # Just grab the last 30D from each concatenated frame
+        raw_frames = obs.reshape(num_frames, -1, 30)[:, -1, :]
+        expert_obs_frames.append(raw_frames)
+    expert_obs_raw = np.concatenate(expert_obs_frames, axis=0)
     
     # 2. Initialize Environment
     print("Initializing MyoLegsGAIL Environment...")
@@ -42,23 +46,51 @@ def main(cfg: DictConfig):
     
     # 3. Collect Agent Observations
     print("Collecting Agent Observations (1000 steps)...")
-    agent_obs = []
+    agent_obs_raw = []
     obs, _ = env.reset()
     
     for _ in range(1000):
         action = env.action_space.sample()
         next_obs, reward, done, truncated, info = env.step(action)
         raw_frame = env.get_disc_obs()
-        agent_obs.append(raw_frame)
+        agent_obs_raw.append(raw_frame)
         if done or truncated:
             obs, _ = env.reset()
             
-    agent_obs = np.array(agent_obs)
-    env.close()
+    agent_obs_raw = np.array(agent_obs_raw)
+    
+    # 4. Update Normalizer with both sets
+    print("Updating Shared Normalizer (env.gail_norm)...")
+    env.gail_norm.train()
+    # History normalization actually happens on the CONCATENATED obs.
+    # For diagnosis, let's normalize the 30D raw frames assuming 1 frame history for simplicity
+    # or just use the first 30D of the normalizer.
+    
+    exp_tensor = torch.from_numpy(expert_obs_raw).float()
+    agt_tensor = torch.from_numpy(agent_obs_raw).float()
+    
+    # We need to broadcast the 30D to the full history size if gail_norm is larger
+    total_norm_dim = env.gail_norm.dim
+    if total_norm_dim > 30:
+        # Repeat the 30D to fit history
+        history_repeat = total_norm_dim // 30
+        exp_full = exp_tensor.repeat(1, history_repeat)
+        agt_full = agt_tensor.repeat(1, history_repeat)
+    else:
+        exp_full = exp_tensor
+        agt_full = agt_tensor
 
-    # 4. Compare Statistics
-    print("\nExpert vs Agent Distribution Details:")
-    header = f"{'Idx':<3} | {'Feature':<18} | {'Exp (Mean±Std)':<18} | {'Agent (Mean±Std)':<18} | {'Exp Range':<15} | {'Stat'}"
+    env.gail_norm(exp_full)
+    env.gail_norm(agt_full)
+    
+    # 5. Apply Normalization
+    env.gail_norm.eval()
+    expert_obs_norm = env.gail_norm(exp_full).numpy()[:, :30]
+    agent_obs_norm = env.gail_norm(agt_full).numpy()[:, :30]
+
+    # 6. Compare Normalized Statistics
+    print("\nNormalized Distributions (Should have Mean~0, Std~1 and overlap):")
+    header = f"{'Idx':<3} | {'Feature':<18} | {'Exp (Mean±Std)':<18} | {'Agent (Mean±Std)':<18} | {'Status'}"
     print(header)
     print("-" * 105)
 
@@ -71,29 +103,25 @@ def main(cfg: DictConfig):
     vel_names = root_vels + r_leg + l_leg 
     
     all_names = angle_names + vel_names + ["target_speed"]
-    total_dims = min(expert_obs.shape[1], agent_obs.shape[1], len(all_names))
 
-    for i in range(total_dims):
-        e_m, e_s = np.mean(expert_obs[:, i]), np.std(expert_obs[:, i])
-        a_m, a_s = np.mean(agent_obs[:, i]), np.std(agent_obs[:, i])
-        e_min, e_max = np.min(expert_obs[:, i]), np.max(expert_obs[:, i])
+    for i in range(30):
+        e_m, e_s = np.mean(expert_obs_norm[:, i]), np.std(expert_obs_norm[:, i])
+        a_m, a_s = np.mean(agent_obs_norm[:, i]), np.std(agent_obs_norm[:, i])
         
         name = all_names[i]
-        diff_scaled = abs(e_m - a_m) / (e_s + 1e-6)
+        diff = abs(e_m - a_m)
         
         status = "OK"
-        if diff_scaled > 10 and abs(e_m - a_m) > 0.5:
-            status = "!!! CHEAT !!!"
-        elif diff_scaled > 5:
-            status = "Warning"
+        if diff > 1.0:
+            status = "Mismatch"
 
         exp_str = f"{e_m:5.2f}±{e_s:4.2f}"
         agt_str = f"{a_m:5.2f}±{a_s:4.2f}"
-        range_str = f"[{e_min:4.1f}, {e_max:4.1f}]"
 
-        print(f"{i:<3} | {name:<18} | {exp_str:<18} | {agt_str:<18} | {range_str:<15} | {status}")
+        print(f"{i:<3} | {name:<18} | {exp_str:<18} | {agt_str:<18} | {status}")
 
     print("\nDiagnostic Complete.")
+    env.close()
 
 if __name__ == "__main__":
     main()

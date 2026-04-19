@@ -32,6 +32,16 @@ class AgentGAIL(AgentHumanoid):
                 shuffle=True
             )
             self.epoch_disc = cfg.learning.get("epoch_disc", 10)
+            
+            # PRE-SEED NORMALIZER: Establish biomechanical scale from expert data
+            print("Pre-seeding GAIL normalizer with expert data...")
+            self.env.gail_norm.train()
+            with torch.no_grad():
+                # Sample a large representative batch
+                init_speeds = np.random.uniform(0.5, 1.5, 4096)
+                states_init = self.loader_exp.dataset.sample_by_speed(init_speeds, 4096).to(self.device).to(self.dtype)
+                self.env.gail_norm(states_init)
+            print(f"Normalizer initialized: Mean shape {self.env.gail_norm.mean.shape}")
     def setup_env(self):
         """
         Initializes the MyoLegsGAIL environment based on the configuration.
@@ -98,9 +108,21 @@ class AgentGAIL(AgentHumanoid):
             # Sample expert data matching these speeds
             states_exp = self.loader_exp.dataset.sample_by_speed(target_speeds, self.batch_size_disc)
             states_exp = states_exp.to(self.dtype).to(self.device)
-            # Update discriminator
-            logits_pi = self.env.gail_disc(states_pi, actions_pi)
-            logits_exp = self.env.gail_disc(states_exp, actions_pi)
+            # Combine and normalize states
+            states_combined = torch.cat([states_pi, states_exp], dim=0)
+            
+            # Update shared normalizer with both distributions
+            self.env.gail_norm.train()
+            states_norm = self.env.gail_norm(states_combined)
+            
+            states_pi_norm = states_norm[:self.batch_size_disc]
+            states_exp_norm = states_norm[self.batch_size_disc:]
+
+            actions_pi = torch.zeros((self.batch_size_disc, 0), device=self.device)
+            
+            # Discriminator predictions
+            logits_pi = self.env.gail_disc(states_pi_norm, actions_pi)
+            logits_exp = self.env.gail_disc(states_exp_norm, actions_pi) # state-only GAIL
             
             loss_pi = -F.logsigmoid(-logits_pi).mean()
             loss_exp = -F.logsigmoid(logits_exp).mean()

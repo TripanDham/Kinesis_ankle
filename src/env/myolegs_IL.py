@@ -24,6 +24,7 @@ from src.utils.visual_capsule import add_visual_capsule
 from src.utils.expert_ghost import ExpertGhost
 from src.env.myolegs_gail_env import get_actuator_names
 from src.KinesisCore.prostwalk_core import ProstWalkCore
+from src.learning.running_norm import RunningNorm
 from gail_airl_ppo.network import GAILDiscrim
 
 import logging
@@ -63,6 +64,8 @@ class MyoLegsGAIL(MyoLegsGailTask):
             hidden_units=cfg.env.get("gail_hidden_units", (256, 256)),
             state_only=True
         )  # Stays on CPU
+        
+        self.gail_norm = RunningNorm(obs_size)
         
         self.optim_disc = Adam(self.gail_disc.parameters(), lr=cfg.env.get("gail_lr", 1e-4))
         
@@ -245,7 +248,17 @@ class MyoLegsGAIL(MyoLegsGailTask):
         a_tensor = torch.zeros((1, 0), device=device)
         
         with torch.no_grad():
-            im_reward = self.gail_disc.calculate_reward(obs_tensor, a_tensor).item()
+            # Apply shared normalization (Training=False here as we update norm in agent update loop)
+            # Actually, we can update it here too, but for consistency we update in agent.
+            self.gail_norm.train(False) 
+            obs_norm = self.gail_norm(obs_tensor)
+            
+            # calculate_reward returns -log(1-D) which is in [0, inf)
+            im_reward = self.gail_disc.calculate_reward(obs_norm, a_tensor).item()
+            
+            # STABILIZATION: Clamp the imitation reward to prevent explosion
+            # A reward of 2.0 corresponds to D=0.86, which is a strong signal but not destabilizing.
+            im_reward = np.clip(im_reward, 0.0, 2.0)
             
         vel_reward = self.compute_velocity_reward()
         upright_reward = self.compute_upright_reward()
