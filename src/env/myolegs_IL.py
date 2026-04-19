@@ -54,13 +54,15 @@ class MyoLegsGAIL(MyoLegsGailTask):
         self.setup_motionlib()
         
         # Discriminator receives same observations as actor (33D per frame)
+        # NOTE: Must stay on CPU — compute_reward() is called in forked sampling workers
+        # which cannot access GPU. The agent moves it to GPU for training only.
         obs_size = self.get_obs_size() 
         self.gail_disc = GAILDiscrim(
             state_shape=(obs_size,),
             action_shape=(0,), # State-only GAIL
             hidden_units=cfg.env.get("gail_hidden_units", (256, 256)),
             state_only=True
-        ).to(cfg.run.get("device", "cpu"))
+        )  # Stays on CPU
         
         self.optim_disc = Adam(self.gail_disc.parameters(), lr=cfg.env.get("gail_lr", 1e-4))
         

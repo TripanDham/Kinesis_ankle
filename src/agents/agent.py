@@ -86,13 +86,10 @@ class Agent:
             random.seed(self.epoch)
             seed = random.randint(0, 5000) * pid
 
-            torch.manual_seed(seed)
+            # Use CPU-only seeding — torch.manual_seed() internally touches CUDA
+            # which crashes in forked subprocesses where the parent initialized CUDA.
+            torch.default_generator.manual_seed(seed)
             np.random.seed(seed)
-            torch.cuda.manual_seed(seed)
-            torch.cuda.manual_seed_all(seed)
-            torch.backends.cudnn.deterministic = True
-            torch.backends.cudnn.benchmark = False
-            torch.use_deterministic_algorithms(True)
 
     def sample_worker(
         self, pid: int, queue: Optional[multiprocessing.Queue], min_batch_size: int

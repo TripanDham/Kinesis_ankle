@@ -28,7 +28,8 @@ def main(cfg: DictConfig):
             project=cfg.project,
             name=cfg.exp_name,
             config=OmegaConf.to_container(cfg, resolve=True),
-            notes=cfg.get("notes", "")
+            notes=cfg.get("notes", ""),
+            mode="online"
         )
     
     # Initialize Agent
@@ -47,6 +48,10 @@ def main(cfg: DictConfig):
     else:
         logger.info("Starting Training Pipeline")
         agent.optimize_policy()
+    
+    # Cleanup
+    if hasattr(agent, "env"):
+        agent.env.close()
 
 if __name__ == "__main__":
     main()

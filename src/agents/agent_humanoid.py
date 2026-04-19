@@ -333,6 +333,13 @@ class AgentHumanoid(AgentPPO, ABC):
 
             if "log_eval" in info:
                 data.update(info["log_eval"])
+            
+            # Log any other numeric metrics (like GAIL losses)
+            for k, v in info.items():
+                if isinstance(v, (int, float, np.float32, np.float64)) and k not in ["T_sample", "T_update", "T_total"]:
+                    # Avoid duplicates already in data
+                    if f"train/{k}" not in data:
+                        data[f"train/{k}"] = v
 
             wandb.log(data=data, step=self.epoch)
 
@@ -354,8 +361,13 @@ class AgentHumanoid(AgentPPO, ABC):
 
             # Update the policy and value networks
             t1 = time.time()
-            self.update_params(batch)
-
+            update_res = self.update_params(batch)
+            
+            # Handle variable return types from update_params
+            update_info = {}
+            if isinstance(update_res, tuple):
+                _, update_info = update_res
+            
             self.epoch += 1
 
             t2 = time.time()
@@ -365,6 +377,8 @@ class AgentHumanoid(AgentPPO, ABC):
                 "T_update": t2 - t1,
                 "T_total": t2 - t0,
             }
+            # Add metrics from update_params (e.g. GAIL losses)
+            info.update(update_info)
 
             if save_model and (self.epoch) % self.cfg.learning.save_frequency == 0:
                 self.save_checkpoint()

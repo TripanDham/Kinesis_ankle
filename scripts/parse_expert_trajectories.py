@@ -60,9 +60,12 @@ def parse_mot(filepath):
         
     return df, in_degrees
 
-def generate_trajectories(data_dir, output_path):
+def generate_trajectories(data_dir, output_path, target_freq=30.0):
     mot_files = sorted(list(Path(data_dir).glob("*.mot")))
     print(f"Found {len(mot_files)} .mot files.")
+    
+    target_dt = 1.0 / target_freq
+    print(f"Resampling to {target_freq} Hz (dt={target_dt:.4f}s)")
     
     trajectories = []
     
@@ -95,20 +98,27 @@ def generate_trajectories(data_dir, output_path):
                     val = -val
                 raw_pos[:, i] = val
 
-        # 2. Extract angles for observation (13D: Exclude pelvis_tx/ty/tz at 0,1,2)
-        angles = raw_pos[:, 3:16] # (num_frames, 13)
+        # 2. Resample raw positions to target frequency
+        new_times = np.arange(times[0], times[-1], target_dt)
+        resampled_raw_pos = np.zeros((len(new_times), len(JOINT_COLUMNS)), dtype=np.float32)
         
-        # 3. Compute Velocities (16D: Finite difference of all 16 pos columns)
-        velocities = np.zeros((num_frames, 16), dtype=np.float32)
-        velocities[:-1] = np.diff(raw_pos, axis=0) / dt
-        velocities[-1] = velocities[-2] # Pad last frame
+        for i in range(len(JOINT_COLUMNS)):
+            resampled_raw_pos[:, i] = np.interp(new_times, times, raw_pos[:, i])
+            
+        # 3. Extract angles for observation (13D: Exclude pelvis_tx/ty/tz at 0,1,2)
+        angles = resampled_raw_pos[:, 3:16] # (num_frames, 13)
         
-        # 4. Target Speed (1D)
-        speed_col = np.full((num_frames, 1), speed, dtype=np.float32)
+        # 4. Compute Velocities (16D: Finite difference of resampled positions)
+        resampled_velocities = np.zeros((len(new_times), 16), dtype=np.float32)
+        resampled_velocities[:-1] = np.diff(resampled_raw_pos, axis=0) / target_dt
+        resampled_velocities[-1] = resampled_velocities[-2] # Pad last frame
         
-        # 5. Concatenate into Final Observation (30D)
+        # 5. Target Speed (1D)
+        speed_col = np.full((len(new_times), 1), speed, dtype=np.float32)
+        
+        # 6. Concatenate into Final Observation (30D)
         # Sequence: Angles (13) + Velocities (16) + Speed (1)
-        obs_traj = np.concatenate([angles, velocities, speed_col], axis=1) # (T, 30)
+        obs_traj = np.concatenate([angles, resampled_velocities, speed_col], axis=1) # (T, 30)
             
         trajectories.append({
             'speed': speed,
@@ -125,6 +135,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, default="/media/tripan/Data/DDP/amputee_data/training_data")
     parser.add_argument("--output_path", type=str, default="data/expert_trajectories.pth")
+    parser.add_argument("--target_freq", type=float, default=30.0)
     args = parser.parse_args()
     
-    generate_trajectories(args.data_dir, args.output_path)
+    generate_trajectories(args.data_dir, args.output_path, args.target_freq)

@@ -46,20 +46,22 @@ class AgentGAIL(AgentHumanoid):
         t0 = time.time()
         
         # 1. Update Discriminator
+        disc_metrics = {}
         if self.training:
-            self.train_discriminator(batch)
+            disc_metrics = self.train_discriminator(batch)
         
         # 2. Update Policy and Value (Standard PPO)
         # Note: In AgentIM/PPO, update_params handles the conversion to tensors and calls update_policy.
         super().update_params(batch)
         
-        return time.time() - t0
+        return time.time() - t0, disc_metrics
 
-    def train_discriminator(self, batch):
+    def train_discriminator(self, batch) -> dict:
         """
         Trains the discriminator using agent rollouts and expert demonstrations.
         """
         to_train(self.env.gail_disc)
+        metrics = {"loss_disc": [], "loss_pi": [], "loss_exp": []}
         
         # We need to extract (s, s') or just s from the batch for the discriminator.
         # However, our environment's GAILDiscrim expects concatenated history observations.
@@ -69,6 +71,9 @@ class AgentGAIL(AgentHumanoid):
         # In our MyoLegsIm.compute_reward, we maintain self.history_buffer.
         # But the batch contains what was returned by step().
         
+        # Move discriminator to GPU for training, then back to CPU for sampling workers
+        self.env.gail_disc.to(self.device)
+        
         for _ in range(self.epoch_disc):
             # Sample from agent's batch
             # Assuming batch.states contains the history-concatenated observations
@@ -77,7 +82,9 @@ class AgentGAIL(AgentHumanoid):
             # The GAIL rewards in compute_reward use self.get_obs() which is often full state.
             
             # Let's assume the agent batch contains the same "state" used by the discriminator.
-            indices = np.random.choice(len(batch.states), self.batch_size_disc, replace=False)
+            # Allow replacement sampling if batch is smaller than discriminator batch size
+            replace = (len(batch.states) < self.batch_size_disc)
+            indices = np.random.choice(len(batch.states), self.batch_size_disc, replace=replace)
             states_pi = torch.from_numpy(batch.states[indices]).to(self.dtype).to(self.device)
             # State-only GAIL uses a dummy action
             actions_pi = torch.zeros((self.batch_size_disc, 0), device=self.device)
@@ -103,4 +110,15 @@ class AgentGAIL(AgentHumanoid):
             loss_disc.backward()
             self.env.optim_disc.step()
             
-        logger.debug(f"Discriminator loss: {loss_disc.item():.4f}")
+            # Record losses
+            metrics["loss_disc"].append(loss_disc.item())
+            metrics["loss_pi"].append(loss_pi.item())
+            metrics["loss_exp"].append(loss_exp.item())
+            
+        avg_metrics = {k: np.mean(v) for k, v in metrics.items()}
+        logger.debug(f"Discriminator loss: {avg_metrics['loss_disc']:.4f}")
+        
+        # Move discriminator back to CPU for forked sampling workers
+        self.env.gail_disc.to("cpu")
+        
+        return avg_metrics

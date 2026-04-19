@@ -25,7 +25,7 @@ reward_specs:
 sim_timestep_inv: 150
 task: MyoLegs OSL_KA GAIL
 termination_distance: 0.15
-impedance_control: true
+impedance_control: false
 active_gains: false
 fixed_knee_stiffness: 0.0
 fixed_knee_damping: 1.0

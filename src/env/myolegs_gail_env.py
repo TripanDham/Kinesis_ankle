@@ -19,6 +19,9 @@ from collections import OrderedDict
 import gymnasium as gym
 import mujoco
 from scipy.spatial.transform import Rotation as sRot
+import logging
+
+logger = logging.getLogger(__name__)
 
 from src.env.myolegs_base_env import BaseEnv
 import src.utils.np_transform_utils as npt_utils
@@ -345,6 +348,7 @@ class MyoLegsGailEnv(BaseEnv):
             self.last_impedance = {
                 "ankle_K": K_ankle_raw, "ankle_B": B_ankle_raw, "ankle_target": target_ankle
             }
+
         else:
             # Action for motors (Direct torque)
             motor_action = action[self.motor_idx]

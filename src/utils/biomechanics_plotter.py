@@ -26,56 +26,80 @@ def plot_biomechanics(all_biomechanics, env):
     num_eps = len(all_biomechanics)
     logger.info(f"Analyzing up to {min_len} timesteps across {num_eps} runs.")
 
-    # 2. Extract Indices (Exact Match for robustness)
+    # 2. Extract Indices (Dynamic Discovery)
     def get_jnt_id(name):
         try:
             return env.mj_model.joint(name).id
-        except ValueError:
+        except (ValueError, KeyError):
             return -1
 
     def get_act_id(name):
         try:
             return env.mj_model.actuator(name).id
-        except ValueError:
+        except (ValueError, KeyError):
             return -1
 
-    # Joint qpos addresses
+    # Define potential joint names (Prosthetic vs Biological)
+    # The right knee might be "osl_knee_angle_r" (prosthetic) or just "knee_angle_r" (O-model)
+    knee_r_name = "osl_knee_angle_r" if get_jnt_id("osl_knee_angle_r") != -1 else "knee_angle_r"
+    ankle_r_name = "osl_ankle_angle_r" if get_jnt_id("osl_ankle_angle_r") != -1 else "ankle_angle_r"
+
     joint_names = {
         "Hip Flexion R": "hip_flexion_r",
-        "Knee R (Prosthetic)": "osl_knee_angle_r",
-        "Ankle R (Prosthetic)": "osl_ankle_angle_r",
+        "Knee R": knee_r_name,
+        "Ankle R": ankle_r_name,
         "Hip Flexion L": "hip_flexion_l",
         "Knee L": "knee_angle_l",
         "Ankle L": "ankle_angle_l"
     }
-    joint_qpos_indices = {display: env.mj_model.jnt_qposadr[get_jnt_id(name)] for display, name in joint_names.items() if get_jnt_id(name) != -1}
+    
+    # Filter only available joints to avoid KeyError in jnt_qposadr
+    joint_qpos_indices = {}
+    joint_qvel_indices = {}
+    for display, name in joint_names.items():
+        jid = get_jnt_id(name)
+        if jid != -1:
+            joint_qpos_indices[display] = env.mj_model.jnt_qposadr[jid]
+            joint_qvel_indices[display] = env.mj_model.joint(name).dofadr[0]
     
     # Actuator Indices
     soleus_l_idx = get_act_id("soleus_l")
-    knee_act_idx = get_act_id("osl_knee_torque_actuator")
-    ankle_act_idx = get_act_id("osl_ankle_torque_actuator")
+    glutmax_l_idx = get_act_id("glutmax_l")
+    glutmax_r_idx = get_act_id("glutmax_r")
     
-    # DOF Indices (for Moments)
+    # Hip Torques (Net Moments)
+    hip_l_dof = env.mj_model.joint("hip_flexion_l").dofadr[0] if get_jnt_id("hip_flexion_l") != -1 else -1
+    hip_r_dof = env.mj_model.joint("hip_flexion_r").dofadr[0] if get_jnt_id("hip_flexion_r") != -1 else -1
+    
+    # Knee act/dof
+    knee_act_idx = get_act_id("osl_knee_torque_actuator") 
     knee_l_dof = env.mj_model.joint("knee_angle_l").dofadr[0] if get_jnt_id("knee_angle_l") != -1 else -1
-    knee_r_dof = env.mj_model.joint("osl_knee_angle_r").dofadr[0] if get_jnt_id("osl_knee_angle_r") != -1 else -1
+    knee_r_dof = env.mj_model.joint(knee_r_name).dofadr[0] if get_jnt_id(knee_r_name) != -1 else -1
+    
+    # Ankle act/dof
+    ankle_act_idx = get_act_id("osl_ankle_torque_actuator")
     ankle_l_dof = env.mj_model.joint("ankle_angle_l").dofadr[0] if get_jnt_id("ankle_angle_l") != -1 else -1
-    ankle_r_dof = env.mj_model.joint("osl_ankle_angle_r").dofadr[0] if get_jnt_id("osl_ankle_angle_r") != -1 else -1
+    ankle_r_dof = env.mj_model.joint(ankle_r_name).dofadr[0] if get_jnt_id(ankle_r_name) != -1 else -1
     
     # Gears
-    gear_knee = env.mj_model.actuator_gear[knee_act_idx, 0] if knee_act_idx != -1 else 1.0
     gear_ankle = env.mj_model.actuator_gear[ankle_act_idx, 0] if ankle_act_idx != -1 else 1.0
 
     # 3. Pre-allocate Data
-    soleus_act = np.zeros((num_eps, min_len))
-    knee_torque_rt = np.zeros((num_eps, min_len))
-    ankle_torque_rt = np.zeros((num_eps, min_len))
+    soleus_l_act = np.zeros((num_eps, min_len))
+    glutmax_l_act = np.zeros((num_eps, min_len))
+    glutmax_r_act = np.zeros((num_eps, min_len))
+    
+    hip_l_moment = np.zeros((num_eps, min_len))
+    hip_r_moment = np.zeros((num_eps, min_len))
     knee_l_moment = np.zeros((num_eps, min_len))
     knee_r_moment = np.zeros((num_eps, min_len))
     ankle_l_moment = np.zeros((num_eps, min_len))
     ankle_r_moment = np.zeros((num_eps, min_len))
     
+    com_vel = np.zeros((num_eps, min_len, 3)) # X, Y, Z
+    
     joint_angles = {name: np.zeros((num_eps, min_len)) for name in joint_qpos_indices.keys()}
-    foot_heights = {k: np.zeros((num_eps, min_len)) for k in ["right_foot", "left_foot", "right_ankle", "left_ankle"]}
+    joint_vels = {name: np.zeros((num_eps, min_len)) for name in joint_qvel_indices.keys()}
     
     imp_keys = ["knee_K", "knee_B", "knee_target", "ankle_K", "ankle_B", "ankle_target"]
     impedance_data = {k: np.zeros((num_eps, min_len)) for k in imp_keys}
@@ -87,48 +111,52 @@ def plot_biomechanics(all_biomechanics, env):
             step_data = all_biomechanics[ep_idx][t]
             
             if soleus_l_idx != -1:
-                soleus_act[ep_idx, t] = step_data["ctrl"][soleus_l_idx]
-                
-            if knee_act_idx != -1:
-                knee_torque_rt[ep_idx, t] = step_data["actuator_force"][knee_act_idx] * gear_knee
-            if ankle_act_idx != -1:
-                ankle_torque_rt[ep_idx, t] = step_data["actuator_force"][ankle_act_idx] * gear_ankle
+                soleus_l_act[ep_idx, t] = step_data["ctrl"][soleus_l_idx]
+            if glutmax_l_idx != -1:
+                glutmax_l_act[ep_idx, t] = step_data["ctrl"][glutmax_l_idx]
+            if glutmax_r_idx != -1:
+                glutmax_r_act[ep_idx, t] = step_data["ctrl"][glutmax_r_idx]
                 
             if "qfrc_actuator" in step_data:
+                if hip_l_dof != -1: hip_l_moment[ep_idx, t] = step_data["qfrc_actuator"][hip_l_dof]
+                if hip_r_dof != -1: hip_r_moment[ep_idx, t] = step_data["qfrc_actuator"][hip_r_dof]
                 if knee_l_dof != -1: knee_l_moment[ep_idx, t] = step_data["qfrc_actuator"][knee_l_dof]
                 if knee_r_dof != -1: knee_r_moment[ep_idx, t] = step_data["qfrc_actuator"][knee_r_dof]
                 if ankle_l_dof != -1: ankle_l_moment[ep_idx, t] = step_data["qfrc_actuator"][ankle_l_dof]
                 if ankle_r_dof != -1: ankle_r_moment[ep_idx, t] = step_data["qfrc_actuator"][ankle_r_dof]
             
-            if "heights" in step_data:
-                for k in foot_heights.keys():
-                    foot_heights[k][ep_idx, t] = step_data["heights"].get(k, 0.0)
-                    
+            # COM Velocity (Base root velocity)
+            com_vel[ep_idx, t, :] = step_data["qvel"][:3]
+                
             for name, qidx in joint_qpos_indices.items():
                 joint_angles[name][ep_idx, t] = step_data["qpos"][qidx]
+                
+            for name, vidx in joint_qvel_indices.items():
+                joint_vels[name][ep_idx, t] = step_data["qvel"][vidx]
 
             if "impedance" in step_data and step_data["impedance"]:
                 has_impedance = True
                 for k in imp_keys:
                     impedance_data[k][ep_idx, t] = step_data["impedance"].get(k, 0.0)
 
-    # 5. Build Subplots (Dashboard)
-    rows = 7 if has_impedance else 5
-    subplot_titles = (
-        "Net Knee Moments (Nm) - L", "Net Knee Moments (Nm) - R",
-        "Net Ankle Moments (Nm) - L", "Net Ankle Moments (Nm) - R",
-        "Leg Kinematics (Left)", "Leg Kinematics (Right)",
-        "Ground Clearance (Feet Z-pos)", "Ground Clearance (Ankles Z-pos)",
-        "Muscle Activation (Soleus L)", ""
-    )
-    if has_impedance:
-        subplot_titles += ("Impedance: Joint Gains (Scaled)", "Impedance: Target Angles (Rad)")
+    # 5. Build Subplots (Restructured Checklist)
+    rows = 7
+    # Flat list of 28 titles (7 rows x 4 columns)
+    subplot_titles = [
+        "Hip Angle - L (Rad)", "Hip Angle - R (Rad)", "Hip Velocity - L (Rad/s)", "Hip Velocity - R (Rad/s)",
+        "Hip Torque - L (Nm)", "Hip Torque - R (Nm)", "", "",
+        "Knee Angle - L (Rad)", "Knee Angle - R (Rad)", "Knee Velocity - L (Rad/s)", "Knee Velocity - R (Rad/s)",
+        "Ankle Angle - L (Rad)", "Ankle Angle - R (Rad)", "Ankle Velocity - L (Rad/s)", "Ankle Velocity - R (Rad/s)",
+        "Ankle Stiffness K", "Ankle Damping B", "Ankle Target Angle (Rad)", "",
+        "Muscle: Soleus L", "Muscle: Gluteus L", "Muscle: Gluteus R", "",
+        "COM Velocity X (Fwd)", "COM Velocity Y (Lat)", "COM Velocity Z (Up)", ""
+    ]
 
     fig = make_subplots(
-        rows=rows, cols=2,
+        rows=rows, cols=4,
         subplot_titles=subplot_titles,
-        vertical_spacing=0.05,
-        horizontal_spacing=0.08
+        vertical_spacing=0.06,
+        horizontal_spacing=0.05
     )
 
     def add_shaded_trace(fig, data, name, row, col, color="blue", y_title=""):
@@ -139,40 +167,48 @@ def plot_biomechanics(all_biomechanics, env):
                                  fill='toself', fillcolor=f'rgba({color}, 0.2)', line=dict(color='rgba(255,255,255,0)'),
                                  showlegend=False, name=f"{name} StdDev"), row=row, col=col)
         fig.add_trace(go.Scatter(x=x, y=mean, line=dict(color=f'rgb({color})'), name=f"{name} Mean"), row=row, col=col)
-        fig.update_yaxes(title_text=y_title, row=row, col=col)
+        if y_title:
+            fig.update_yaxes(title_text=y_title, row=row, col=col)
 
-    # Row 1-2: Net Moments
-    add_shaded_trace(fig, knee_l_moment, "Knee L", 1, 1, "100,100,100", "Nm")
-    add_shaded_trace(fig, knee_r_moment, "Knee R", 1, 2, "0,150,255", "Nm")
-    add_shaded_trace(fig, ankle_l_moment, "Ankle L", 2, 1, "100,100,100", "Nm")
-    add_shaded_trace(fig, ankle_r_moment, "Ankle R", 2, 2, "0,150,255", "Nm")
+    # Row 1: Hip Kinematics
+    add_shaded_trace(fig, joint_angles.get("Hip Flexion L", np.zeros(min_len)), "Hip L Angle", 1, 1, "150,0,250")
+    add_shaded_trace(fig, joint_angles.get("Hip Flexion R", np.zeros(min_len)), "Hip R Angle", 1, 2, "255,100,0")
+    add_shaded_trace(fig, joint_vels.get("Hip Flexion L", np.zeros(min_len)), "Hip L Vel", 1, 3, "150,0,250")
+    add_shaded_trace(fig, joint_vels.get("Hip Flexion R", np.zeros(min_len)), "Hip R Vel", 1, 4, "255,100,0")
 
-    # Row 3: Kinematics
-    add_shaded_trace(fig, joint_angles["Knee L"], "Knee L", 3, 1, "150,0,250", "Rad")
-    add_shaded_trace(fig, joint_angles["Ankle L"], "Ankle L", 3, 1, "100,0,200", "Rad")
-    add_shaded_trace(fig, joint_angles["Knee R (Prosthetic)"], "Knee R", 3, 2, "255,100,0", "Rad")
-    add_shaded_trace(fig, joint_angles["Ankle R (Prosthetic)"], "Ankle R", 3, 2, "200,80,0", "Rad")
+    # Row 2: Hip Torques
+    add_shaded_trace(fig, hip_l_moment, "Hip L Torque", 2, 1, "100,100,100")
+    add_shaded_trace(fig, hip_r_moment, "Hip R Torque", 2, 2, "0,150,255")
 
-    # Row 4: Foot/Ankle Heights
-    add_shaded_trace(fig, foot_heights["left_foot"], "Foot L", 4, 1, "0,150,0", "m")
-    add_shaded_trace(fig, foot_heights["right_foot"], "Foot R", 4, 1, "0,200,0", "m")
-    add_shaded_trace(fig, foot_heights["left_ankle"], "Ankle L", 4, 2, "150,150,0", "m")
-    add_shaded_trace(fig, foot_heights["right_ankle"], "Ankle R", 4, 2, "200,200,0", "m")
-    for c in [1, 2]: fig.add_shape(type="line", x0=0, y0=0, x1=min_len, y1=0, line=dict(color="black", dash="dash"), row=4, col=c)
+    # Row 3: Knee Kinematics
+    add_shaded_trace(fig, joint_angles.get("Knee L", np.zeros(min_len)), "Knee L Angle", 3, 1, "150,0,250")
+    add_shaded_trace(fig, joint_angles.get("Knee R", np.zeros(min_len)), "Knee R Angle", 3, 2, "255,100,0")
+    add_shaded_trace(fig, joint_vels.get("Knee L", np.zeros(min_len)), "Knee L Vel", 3, 3, "150,0,250")
+    add_shaded_trace(fig, joint_vels.get("Knee R", np.zeros(min_len)), "Knee R Vel", 3, 4, "255,100,0")
 
-    # Row 5: Muscle Activations
-    add_shaded_trace(fig, soleus_act, "Soleus L", 5, 1, "255,0,0", "Activation (0-1)")
+    # Row 4: Ankle Kinematics
+    add_shaded_trace(fig, joint_angles.get("Ankle L", np.zeros(min_len)), "Ankle L Angle", 4, 1, "150,0,250")
+    add_shaded_trace(fig, joint_angles.get("Ankle R", np.zeros(min_len)), "Ankle R Angle", 4, 2, "255,100,0")
+    add_shaded_trace(fig, joint_vels.get("Ankle L", np.zeros(min_len)), "Ankle L Vel", 4, 3, "150,0,250")
+    add_shaded_trace(fig, joint_vels.get("Ankle R", np.zeros(min_len)), "Ankle R Vel", 4, 4, "255,100,0")
 
+    # Row 5: Impedance Parameters
     if has_impedance:
-        # Row 6: Impedance Gains
-        add_shaded_trace(fig, impedance_data["knee_K"], "Knee K", 6, 1, "0,150,150", "Nm/rad")
-        add_shaded_trace(fig, impedance_data["ankle_K"], "Ankle K", 6, 2, "150,150,0", "Nm/rad")
-        
-        # Row 7: Impedance Targets
-        add_shaded_trace(fig, impedance_data["knee_target"], "Knee Target", 7, 1, "0,150,150", "Rad")
-        add_shaded_trace(fig, impedance_data["ankle_target"], "Ankle Target", 7, 2, "150,150,0", "Rad")
+        add_shaded_trace(fig, impedance_data["ankle_K"], "Ankle Stiffness K", 5, 1, "0,150,150")
+        add_shaded_trace(fig, impedance_data["ankle_B"], "Ankle Damping B", 5, 2, "150,150,0")
+        add_shaded_trace(fig, impedance_data["ankle_target"], "Ankle Target Angle", 5, 3, "255,0,0")
 
-    fig.update_layout(height=400 * rows, width=1200, title_text="MuJoCo Biomechanics Evaluation Dashboard", showlegend=True)
+    # Row 6: Muscle Activations
+    add_shaded_trace(fig, soleus_l_act, "Soleus L", 6, 1, "255,0,0")
+    add_shaded_trace(fig, glutmax_l_act, "GlutMax L", 6, 2, "200,0,50")
+    add_shaded_trace(fig, glutmax_r_act, "GlutMax R", 6, 3, "200,50,0")
+
+    # Row 7: COM Velocity
+    add_shaded_trace(fig, com_vel[:, :, 0], "COM X (Fwd)", 7, 1, "0,0,0")
+    add_shaded_trace(fig, com_vel[:, :, 1], "COM Y (Lat)", 7, 2, "150,150,150")
+    add_shaded_trace(fig, com_vel[:, :, 2], "COM Z (Up)", 7, 3, "200,0,0")
+
+    fig.update_layout(height=350 * rows, width=1400, title_text="MuJoCo Biomechanics Evaluation Dashboard (7-Row)", showlegend=True)
     
     output_path = os.path.abspath("biomechanics_dashboard.html")
     fig.write_html(output_path)
@@ -180,5 +216,5 @@ def plot_biomechanics(all_biomechanics, env):
     print(f"\n" + "="*80)
     print(f"BIOMECHANICS ANALYSIS COMPLETE")
     print(f"Dashboard saved to: {output_path}")
-    print(f"Indices: Knee R Act={knee_act_idx} (Gear={gear_knee:.1f}), Knee L DOF={knee_l_dof}")
+    print(f"Indices: Ankle R Act={ankle_act_idx} (Gear={gear_ankle:.1f}), Knee L DOF={knee_l_dof}")
     print(f"="*80 + "\n")

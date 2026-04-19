@@ -23,7 +23,9 @@ class LoggerRL:
         self.min_reward = math.inf
         self.max_reward = -math.inf
         self.episode_reward = 0
+        self.episode_reward_list = []
         self.avg_episode_reward = 0
+        self.avg_episode_reward_std = 0
         self.sample_time = 0
         self.info_dict = defaultdict(list)
         
@@ -41,6 +43,7 @@ class LoggerRL:
     def end_episode(self, env):
         self.num_episodes += 1
         self.total_reward += self.episode_reward
+        self.episode_reward_list.append(self.episode_reward)
         self.min_episode_reward = min(self.min_episode_reward, self.episode_reward)
         self.max_episode_reward = max(self.max_episode_reward, self.episode_reward)
 
@@ -54,22 +57,40 @@ class LoggerRL:
         logger.total_reward = sum([x.total_reward for x in logger_list])
         logger.num_episodes = sum([x.num_episodes for x in logger_list])
         logger.num_steps = sum([x.num_steps for x in logger_list])
-        logger.avg_episode_len = logger.num_steps / logger.num_episodes
-        logger.avg_episode_reward = logger.total_reward / logger.num_episodes
-        logger.max_episode_reward = max([x.max_episode_reward for x in logger_list])
-        logger.min_episode_reward = max([x.min_episode_reward for x in logger_list])
-        logger.avg_reward = logger.total_reward / logger.num_steps
-        logger.max_reward = max([x.max_reward for x in logger_list])
-        logger.min_reward = min([x.min_reward for x in logger_list])
+        
+        # Episode reward stats
+        all_episode_rewards = []
+        for l in logger_list:
+            all_episode_rewards.extend(l.episode_reward_list)
+        
+        if len(all_episode_rewards) > 0:
+            logger.avg_episode_reward = np.mean(all_episode_rewards)
+            logger.avg_episode_reward_std = np.std(all_episode_rewards)
+            logger.max_episode_reward = np.max(all_episode_rewards)
+            logger.min_episode_reward = np.min(all_episode_rewards)
+        
+        logger.avg_episode_len = logger.num_steps / logger.num_episodes if logger.num_episodes > 0 else 0
+        logger.avg_reward = logger.total_reward / logger.num_steps if logger.num_steps > 0 else 0
+        
+        # Merge info_dict with variance
         logger.info_dict = {}
+        all_step_rewards = []
         for k in logger_list[0].info_dict.keys():
             try:
-                # Only average items that can be converted to a numeric array
-                data = np.concatenate([np.array(x.info_dict[k]) for x in logger_list])
-                if np.issubdtype(data.dtype, np.number) and data.size > 0:
+                # Concatenate all steps for this metric
+                data = np.concatenate([np.array(x.info_dict[k], dtype=np.float32) for x in logger_list if len(x.info_dict[k]) > 0])
+                if data.size > 0:
                     logger.info_dict[k] = np.mean(data)
+                    # If this is the total reward component, use it for step reward variance
+                    if k == "total_reward":
+                        all_step_rewards = data
             except (ValueError, TypeError):
-                # Skip non-numeric data like biomechanics_data
                 continue
+        
+        logger.avg_reward_std = np.std(all_step_rewards) if len(all_step_rewards) > 0 else 0
+        
+        # Step reward stats (min/max over all steps)
+        logger.max_reward = max([x.max_reward for x in logger_list])
+        logger.min_reward = min([x.min_reward for x in logger_list])
         
         return logger
