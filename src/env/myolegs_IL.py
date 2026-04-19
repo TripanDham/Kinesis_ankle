@@ -24,7 +24,6 @@ from src.utils.visual_capsule import add_visual_capsule
 from src.utils.expert_ghost import ExpertGhost
 from src.env.myolegs_gail_env import get_actuator_names
 from src.KinesisCore.prostwalk_core import ProstWalkCore
-from src.learning.running_norm import RunningNorm
 from gail_airl_ppo.network import GAILDiscrim
 
 import logging
@@ -57,15 +56,13 @@ class MyoLegsGAIL(MyoLegsGailTask):
         # Discriminator receives same observations as actor (33D per frame)
         # NOTE: Must stay on CPU — compute_reward() is called in forked sampling workers
         # which cannot access GPU. The agent moves it to GPU for training only.
-        obs_size = self.get_obs_size() 
+        obs_size = self.get_task_obs_size() 
         self.gail_disc = GAILDiscrim(
             state_shape=(obs_size,),
             action_shape=(0,), # State-only GAIL
             hidden_units=cfg.env.get("gail_hidden_units", (256, 256)),
             state_only=True
         )  # Stays on CPU
-        
-        self.gail_norm = RunningNorm(obs_size)
         
         self.optim_disc = Adam(self.gail_disc.parameters(), lr=cfg.env.get("gail_lr", 1e-4))
         
@@ -77,8 +74,8 @@ class MyoLegsGAIL(MyoLegsGailTask):
     def _setup_obs_mapping(self):
         """Pre-calculates qpos/qvel indices for the 30D observation vector."""
         # 1. Angles (13D)
-        # Root (3): tilt, list, rot
-        root_angle_names = ["pelvis_tilt", "pelvis_list", "pelvis_rotation"]
+        # Root (0D) - Pelvis tilt, list, rot removed
+        root_angle_names = []
         # Right Leg (5): hip (3), knee (1), ankle (1)
         right_leg_names = ["hip_flexion_r", "hip_adduction_r", "hip_rotation_r", "knee_angle_r", "osl_ankle_angle_r"]
         # Left Leg (5): hip (3), knee (1), ankle (1)
@@ -88,13 +85,13 @@ class MyoLegsGAIL(MyoLegsGailTask):
         self.obs_qpos_idx = [self.mj_model.joint(n).qposadr[0] for n in angle_names]
         
         # 2. Velocities (16D)
-        # Root (6): lin (3), ang (3)
-        root_vel_names = ["pelvis_tx", "pelvis_ty", "pelvis_tz", "pelvis_tilt", "pelvis_list", "pelvis_rotation"]
+        # Root (3): lin (3) - Angular (tilt, list, rotation) removed
+        root_vel_names = ["pelvis_tx", "pelvis_ty", "pelvis_tz"]
         # Right/Left joint velocities
         vel_names = root_vel_names + right_leg_names + left_leg_names
         self.obs_qvel_idx = [self.mj_model.joint(n).dofadr[0] for n in vel_names]
         
-        logger.info(f"Observation mapping initialized for 30D vector.")
+        logger.info(f"Observation mapping initialized for 24D vector.")
 
     def setup_motionlib(self):
         """Initializes the motion library using ProstWalkCore."""
@@ -109,8 +106,8 @@ class MyoLegsGAIL(MyoLegsGailTask):
 
     def get_disc_obs(self) -> np.ndarray:
         """
-        Computes the 30D raw observation (13 angles + 16 velocities + 1 target speed)
-        matching the expert data format, excluding pelvis translation.
+        Computes the 24D raw observation (10 angles + 13 velocities + 1 root height)
+        matching the expert data format, excluding pelvis translation and target speed.
         """
         # 1. Angles (13D)
         angles = self.mj_data.qpos[self.obs_qpos_idx].astype(self.dtype)
@@ -120,12 +117,12 @@ class MyoLegsGAIL(MyoLegsGailTask):
 
         self.curr_proprioception = angles # Used for height/upright rewards
         
-        # 3. Target Speed
-        target_speed = np.array([self.target_speed], dtype=self.dtype)
+        # 3. Root Height
+        root_height = np.array([self.mj_data.qpos[1]], dtype=self.dtype)
         
-        return np.concatenate([angles, vels, target_speed])
+        return np.concatenate([angles, vels, root_height])
 
-    def compute_observations(self) -> np.ndarray:
+    def compute_task_obs(self) -> np.ndarray:
         """Returns the concatenated temporal history of disc observations."""
         raw_obs = self.get_disc_obs()
         self.history_buffer.append(raw_obs)
@@ -137,16 +134,10 @@ class MyoLegsGAIL(MyoLegsGailTask):
             
         return np.concatenate(hist)
 
-    def get_obs(self) -> np.ndarray:
-        """Returns the current observation."""
-        return self.compute_observations()
-
-    def get_obs_size(self) -> int:
-        """Observation size: 30D per frame (13 angles + 16 velocities + 1 speed) * history."""
-        return 30 * self.history_len
-
     def get_task_obs_size(self) -> int:
-        return 0
+        """Size of the GAIL history state (e.g. 24 * history_len)."""
+        return 24 * self.history_len
+
 
     def init_myolegs(self):
         """
@@ -198,8 +189,7 @@ class MyoLegsGAIL(MyoLegsGailTask):
         
         logger.info(f"Target speed for this episode: {self.target_speed}")
 
-    def compute_task_obs(self) -> np.ndarray:
-        return np.empty(0, dtype=self.dtype)
+    # compute_task_obs is defined above and dynamically returns the history
 
     def draw_task(self):
         """Draws expert ghost model in the viewer each render frame."""
@@ -242,19 +232,14 @@ class MyoLegsGAIL(MyoLegsGailTask):
 
     def compute_reward(self, action: Optional[np.ndarray] = None) -> float:
         """GAIL Reward using the Discriminator + Velocity Matching."""
-        obs = self.get_obs()
+        gail_obs = self.compute_task_obs()
         device = next(self.gail_disc.parameters()).device
-        obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+        obs_tensor = torch.as_tensor(gail_obs, dtype=torch.float32, device=device).unsqueeze(0)
         a_tensor = torch.zeros((1, 0), device=device)
         
         with torch.no_grad():
-            # Apply shared normalization (Training=False here as we update norm in agent update loop)
-            # Actually, we can update it here too, but for consistency we update in agent.
-            self.gail_norm.train(False) 
-            obs_norm = self.gail_norm(obs_tensor)
-            
             # calculate_reward returns -log(1-D) which is in [0, inf)
-            im_reward = self.gail_disc.calculate_reward(obs_norm, a_tensor).item()
+            im_reward = self.gail_disc.calculate_reward(obs_tensor, a_tensor).item()
             
             # STABILIZATION: Clamp the imitation reward to prevent explosion
             # A reward of 2.0 corresponds to D=0.86, which is a strong signal but not destabilizing.

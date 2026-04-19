@@ -14,13 +14,14 @@ class RunningNorm(nn.Module):
     using running estimates of mean,std
     """
 
-    def __init__(self, dim, demean=True, destd=True, clip=5.0, decay=1):
+    def __init__(self, dim, demean=True, destd=True, clip=5.0, decay=1, frozen_slice=0):
         super().__init__()
         self.dim = dim
         self.demean = demean
         self.destd = destd
         self.clip = clip
         self.decay = decay
+        self.frozen_slice = frozen_slice
         self.register_buffer("n", torch.tensor(0, dtype=torch.long))
         self.register_buffer("mean", torch.zeros(dim))
         self.register_buffer("var", torch.zeros(dim))
@@ -29,14 +30,28 @@ class RunningNorm(nn.Module):
     def update(self, x):
         var_x, mean_x = torch.var_mean(x, dim=0, unbiased=False)
         m = x.shape[0]
-        w = self.n.to(x.dtype) / (m + self.n).to(x.dtype)
+        w = self.n.to(x.device, x.dtype) / (m + self.n).to(x.device, x.dtype)
+        
+        if self.frozen_slice > 0:
+            old_mean = self.mean[:self.frozen_slice].clone()
+            old_var = self.var[:self.frozen_slice].clone()
+            old_std = self.std[:self.frozen_slice].clone()
+
         self.var[:] = (w * self.var + (1 - w) * var_x + w * (1 - w) * (mean_x - self.mean).pow(2))
         # Add decay to variance
         self.var[:] = (1 - self.decay) * var_x + self.decay * self.var
+        
         self.mean[:] = w * self.mean + (1 - w) * mean_x
         # Add decay to mean
         self.mean[:] = (1 - self.decay) * mean_x + self.decay * self.mean
+        
         self.std[:] = torch.sqrt(self.var)
+        
+        if self.frozen_slice > 0:
+            self.mean[:self.frozen_slice] = old_mean
+            self.var[:self.frozen_slice] = old_var
+            self.std[:self.frozen_slice] = old_std
+
         self.n += m
 
     def forward(self, x):

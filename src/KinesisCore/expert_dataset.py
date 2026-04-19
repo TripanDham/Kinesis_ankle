@@ -91,11 +91,8 @@ class ExpertDataset(Dataset):
             keep_idx = list(range(3, window.size(1)))
             window = window[:, keep_idx]  # (history_len, 29 or 30)
         
-        # Append speed if it was stripped or not present in the columns
-        # Note: If size(1) is now 29, appending speed makes it 30.
-        if window.size(1) == 29:
-            speed_col = torch.full((self.history_len, 1), speed, dtype=torch.float32)
-            window = torch.cat([window, speed_col], dim=1) # (history_len, 30)
+        # No longer appending speed here, as the discriminator should only see biomechanical states.
+        # Speed is still available in the trajectory metadata for sampling.
         
         # Concatenate temporal history into a single vector
         return window.reshape(-1)

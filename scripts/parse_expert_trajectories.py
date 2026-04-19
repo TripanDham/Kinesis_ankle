@@ -110,27 +110,29 @@ def generate_trajectories(data_dir, output_path, target_freq=30.0):
         for i in range(16):
             resampled_raw_pos[:, i] = np.interp(new_times, times, raw_pos[:, i])
             
-        # 5. Construct 30D Observation Frame
-        obs_angles = resampled_raw_pos[:, 3:16]
+        # 5. Construct 24D Observation Frame
+        # 10 Angles: skips 0,1,2 (Pos) and 3,4,5 (Rot)
+        obs_angles = resampled_raw_pos[:, 6:16]
         
-        # Velocities: Finite difference (16D)
+        # Velocities: Finite difference (16D raw -> 13D pruned)
         resampled_vels = np.zeros((len(new_times), 16), dtype=np.float32)
         diffs = np.diff(resampled_raw_pos, axis=0) / (target_dt + 1e-8)
         
         # CLEANING: Clip velocity outliers that cause discriminator collapse
-        # Trans velocities (0,1,2)
+        TRANS_VEL_LIMIT, VEL_LIMIT = 5.0, 40.0
         diffs[:, 0:3] = np.clip(diffs[:, 0:3], -TRANS_VEL_LIMIT, TRANS_VEL_LIMIT)
-        # Angular velocities (3:16)
         diffs[:, 3:16] = np.clip(diffs[:, 3:16], -VEL_LIMIT, VEL_LIMIT)
         
         resampled_vels[:-1] = diffs
         resampled_vels[-1] = resampled_vels[-2]
+
+        # Prune to 13D: We keep 0,1,2 (Translational Vels) and 6:16 (Joint Vels)
+        vel_indices = [0, 1, 2] + list(range(6, 16))
+        obs_vels = resampled_vels[:, vel_indices]
         
-        # Speed: Target constant (1D)
-        speed_col = np.full((len(new_times), 1), speed, dtype=np.float32)
-        
-        # Sequence: [Angles 13] + [Vels 16] + [Speed 1] = 30D
-        obs_traj = np.concatenate([obs_angles, resampled_vels, speed_col], axis=1)
+        # Sequence: [Angles 10] + [Vels 13] + [Pelvis Height 1] = 24D
+        height_col = resampled_raw_pos[:, 1:2]
+        obs_traj = np.concatenate([obs_angles, obs_vels, height_col], axis=1)
         
         trajectories.append({
             'speed': speed,

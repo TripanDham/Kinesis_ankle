@@ -24,7 +24,7 @@ policy_grad_clip: 25
 save_curr_frequency: 10
 
 # Model save frequency
-save_frequency: 1000
+save_frequency: 500
 
 # Termination history flag
 resume_history: True

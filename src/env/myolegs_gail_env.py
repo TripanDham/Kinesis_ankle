@@ -38,6 +38,7 @@ class MyoLegsGailEnv(BaseEnv):
         )
         self.setup_myolegs_params()
         self.reward_info = {}
+        self.target_speed = 0.0 # Default for observation space sizing
         
         self.impedance_control = cfg.env.get("impedance_control", False)
         self.active_gains = cfg.env.get("active_gains", True)
@@ -115,44 +116,19 @@ class MyoLegsGailEnv(BaseEnv):
         """
         return self.get_self_obs_size()
 
-    def compute_observations(self) -> np.ndarray:
-        """
-        Computes the observations. In the environment class, this defaults to the proprioceptive observations.
-        """
-        obs = self.compute_proprioception()
-        return obs
+
     
     def compute_info(self):
         raise NotImplementedError
     
     def get_self_obs_size(self) -> int:
         """
-        Returns the size of the proprioceptive observations.
+        Returns the size of the proprioceptive observations dynamically.
         """
-        inputs = self.cfg.run.proprioceptive_inputs
-        tally = 0
-        if "root_height" in inputs:
-            tally += 1
-        if "root_tilt" in inputs:
-            tally += 4
-        if "local_body_pos" in inputs:
-            tally += 3 * self.num_bodies - 3
-        if "local_body_rot" in inputs:
-            tally += 6 * self.num_bodies
-        if "local_body_vel" in inputs:
-            tally += 3 * self.num_bodies
-        if "local_body_ang_vel" in inputs:
-            tally += 3 * self.num_bodies
-        if "muscle_len" in inputs:
-            tally += self.mj_model.nu
-        if "muscle_vel" in inputs:
-            tally += self.mj_model.nu
-        if "muscle_force" in inputs:
-            tally += self.mj_model.nu
-        if "feet_contacts" in inputs:
-            tally += 4
-
-        return tally
+        if hasattr(self, "proprioception"):
+            return sum([len(v) for v in self.proprioception.values()])
+        else:
+            return len(self.compute_proprioception())
 
     def compute_proprioception(self) -> np.ndarray:
         """
@@ -187,26 +163,18 @@ class MyoLegsGailEnv(BaseEnv):
         
         inputs = self.cfg.run.proprioceptive_inputs
 
-        if "root_height" in inputs:
-            myolegs_obs["root_height"] = obs_dict["root_h_obs"] # 1
-        if "root_tilt" in inputs:
-            myolegs_obs["root_tilt"] = np.array([np.cos(root_rot_euler[0]), np.sin(root_rot_euler[0]), np.cos(root_rot_euler[1]), np.sin(root_rot_euler[1])]) # 4
-        if "local_body_pos" in inputs:
-            myolegs_obs["local_body_pos"] = obs_dict["local_body_pos"][0] # 3 * num_bodies
-        if "local_body_rot" in inputs:
-            myolegs_obs["local_body_rot"] = obs_dict["local_body_rot_obs"][0] # 6 * num_bodies
-        if "local_body_vel" in inputs:
-            myolegs_obs["local_body_vel"] = obs_dict["local_body_vel"][0] # 3 * num_bodies
-        if "local_body_ang_vel" in inputs:
-            myolegs_obs["local_body_ang_vel"] = obs_dict["local_body_ang_vel"][0] # 3 * num_bodies
-        if "muscle_len" in inputs:
-            myolegs_obs["muscle_len"] = np.nan_to_num(self.mj_data.actuator_length.copy()) # num_actuators
-        if "muscle_vel" in inputs:
-            myolegs_obs["muscle_vel"] = np.nan_to_num(self.mj_data.actuator_velocity.copy()) # num_actuators
-        if "muscle_force" in inputs:
-            myolegs_obs["muscle_force"] = np.nan_to_num(self.mj_data.actuator_force.copy()) # num_actuators
-        if "feet_contacts" in inputs:
-            myolegs_obs["feet_contacts"] = self.get_touch() # 4
+        # STRICT OBSERVATION SET:
+        # [GAIL History (180D) is provided by MyoLegsIL wrapper]
+        
+        # STRICT OBSERVATION SET:
+        # [GAIL History (180D) is provided by MyoLegsIL wrapper]
+        
+        # 1. Target Speed (1D)
+        myolegs_obs["target_speed"] = np.array([self.target_speed], dtype=self.dtype)
+        
+        # 2. Muscle Activations (22D)
+        myolegs_obs["muscle_act"] = np.nan_to_num(self.mj_data.act.copy()) if self.mj_data.act is not None else np.zeros(self.mj_model.na)
+        
         self.proprioception = myolegs_obs
 
         return np.concatenate([v.ravel() for v in myolegs_obs.values()], axis=0, dtype=self.dtype)

@@ -23,7 +23,7 @@ class AgentGAIL(AgentHumanoid):
         
         # Expert buffer for discriminator training
         if training:
-            self.history_len = cfg.run.get("history_len", 6)
+            self.history_len = self.env.history_len # Forced sync with env
             self.batch_size_disc = cfg.learning.get("batch_size_disc", 64)
             self.loader_exp = get_expert_loader(
                 path=cfg.run.expert_buffer_path,
@@ -33,15 +33,26 @@ class AgentGAIL(AgentHumanoid):
             )
             self.epoch_disc = cfg.learning.get("epoch_disc", 10)
             
-            # PRE-SEED NORMALIZER: Establish biomechanical scale from expert data
-            print("Pre-seeding GAIL normalizer with expert data...")
-            self.env.gail_norm.train()
+            # SYNCHRONIZED NORMALIZATION: 
+            # 1. Sample expert dataset to get the mean/var for the GAIL History subspace.
+            # 2. Inject it into the PPO policy's internal normalizer and FREEZE it. 
+            gail_obs_size = self.env.get_task_obs_size()
+            print(f"Pre-seeding PPO internal normalizer with expert data for the {gail_obs_size}D history slice...")
             with torch.no_grad():
-                # Sample a large representative batch
                 init_speeds = np.random.uniform(0.5, 1.5, 4096)
-                states_init = self.loader_exp.dataset.sample_by_speed(init_speeds, 4096).to(self.device).to(self.dtype)
-                self.env.gail_norm(states_init)
-            print(f"Normalizer initialized: Mean shape {self.env.gail_norm.mean.shape}")
+                states_init = self.loader_exp.dataset.sample_by_speed(init_speeds, 4096).to("cpu").to(self.dtype)
+                
+                mean_gail = states_init.mean(dim=0)
+                var_gail = states_init.var(dim=0, unbiased=False)
+                
+                # Freeze the first N indices of PPO's overall normalizer
+                self.policy_net.norm.frozen_slice = gail_obs_size
+                self.policy_net.norm.mean[:gail_obs_size] = mean_gail.to(self.policy_net.norm.mean.device)
+                self.policy_net.norm.var[:gail_obs_size] = var_gail.to(self.policy_net.norm.var.device)
+                self.policy_net.norm.std[:gail_obs_size] = torch.sqrt(self.policy_net.norm.var[:gail_obs_size])
+                
+                # Advance tracking `n` gently so PPO doesnt overwrite blindly on step 1
+                self.policy_net.norm.n += 4096
     def setup_env(self):
         """
         Initializes the MyoLegsGAIL environment based on the configuration.
@@ -81,7 +92,7 @@ class AgentGAIL(AgentHumanoid):
         # In our MyoLegsIm.compute_reward, we maintain self.history_buffer.
         # But the batch contains what was returned by step().
         
-        # Move discriminator to GPU for training, then back to CPU for sampling workers
+        # Move discriminator to GPU for training
         self.env.gail_disc.to(self.device)
         
         for _ in range(self.epoch_disc):
@@ -95,34 +106,44 @@ class AgentGAIL(AgentHumanoid):
             # Allow replacement sampling if batch is smaller than discriminator batch size
             replace = (len(batch.states) < self.batch_size_disc)
             indices = np.random.choice(len(batch.states), self.batch_size_disc, replace=replace)
-            states_pi = torch.from_numpy(batch.states[indices]).to(self.dtype).to(self.device)
-            # State-only GAIL uses a dummy action
-            actions_pi = torch.zeros((self.batch_size_disc, 0), device=self.device)
+            states_pi_full = torch.from_numpy(batch.states[indices]).to(self.dtype).to(self.device)
+            
+            # The GAIL state is always the first subset of the full RL observation vector
+            gail_obs_size = self.env.get_task_obs_size()
+            states_pi = states_pi_full[:, :gail_obs_size]
             
             # Extract target speeds from agent rollouts
-            # States are (batch, 30 * history_len). Reshape to (batch, history_len, 30)
-            # The speed is the last element of each 30D frame.
-            states_pi_frames = states_pi.view(self.batch_size_disc, self.history_len, 30)
-            target_speeds = states_pi_frames[:, -1, -1]
+            # Now that height is in history, target_speed is the FIRST element 
+            # of the proprioceptive slice [Speed, Muscles]
+            target_speeds = states_pi_full[:, gail_obs_size]
             
             # Sample expert data matching these speeds
             states_exp = self.loader_exp.dataset.sample_by_speed(target_speeds, self.batch_size_disc)
             states_exp = states_exp.to(self.dtype).to(self.device)
-            # Combine and normalize states
-            states_combined = torch.cat([states_pi, states_exp], dim=0)
             
-            # Update shared normalizer with both distributions
-            self.env.gail_norm.train()
-            states_norm = self.env.gail_norm(states_combined)
-            
-            states_pi_norm = states_norm[:self.batch_size_disc]
-            states_exp_norm = states_norm[self.batch_size_disc:]
+            # NORMALIZATION PARITY:
+            # We map BOTH the expert state and the agent state through PPO's normalizer so the discriminator matches
+            self.policy_net.norm.eval()
+            with torch.no_grad():
+                # For expert states, we temporarily pad to full dimension to use the normalizer, then extract just the GAIL slice
+                padded_exp = torch.zeros(self.batch_size_disc, self.policy_net.norm.dim, device=self.device, dtype=self.dtype)
+                padded_exp[:, :gail_obs_size] = states_exp
+                states_exp_norm = self.policy_net.norm(padded_exp)[:, :gail_obs_size]
+                
+                # For agent states, just take the first N dimensions of their fully normalized variant
+                states_pi_norm = self.policy_net.norm(states_pi_full)[:, :gail_obs_size]
+
+            # INSTANCE NOISE: Prevents the discriminator from instantly solving the problem by 
+            # memorizing clipped extremes (e.g., [5.0, 5.0]). Also adds continuous gradients.
+            noise_std = 0.1
+            states_pi_noisy = states_pi_norm + torch.randn_like(states_pi_norm) * noise_std
+            states_exp_noisy = states_exp_norm + torch.randn_like(states_exp_norm) * noise_std
 
             actions_pi = torch.zeros((self.batch_size_disc, 0), device=self.device)
             
             # Discriminator predictions
-            logits_pi = self.env.gail_disc(states_pi_norm, actions_pi)
-            logits_exp = self.env.gail_disc(states_exp_norm, actions_pi) # state-only GAIL
+            logits_pi = self.env.gail_disc(states_pi_noisy, actions_pi)
+            logits_exp = self.env.gail_disc(states_exp_noisy, actions_pi) # state-only GAIL
             
             loss_pi = -F.logsigmoid(-logits_pi).mean()
             loss_exp = -F.logsigmoid(logits_exp).mean()
@@ -137,10 +158,7 @@ class AgentGAIL(AgentHumanoid):
             metrics["loss_pi"].append(loss_pi.item())
             metrics["loss_exp"].append(loss_exp.item())
             
-        avg_metrics = {k: np.mean(v) for k, v in metrics.items()}
-        logger.debug(f"Discriminator loss: {avg_metrics['loss_disc']:.4f}")
-        
-        # Move discriminator back to CPU for forked sampling workers
+        # Move back to CPU for sampling workers
         self.env.gail_disc.to("cpu")
         
-        return avg_metrics
+        return {k: np.mean(v) for k, v in metrics.items()}

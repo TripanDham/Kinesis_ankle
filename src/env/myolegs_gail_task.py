@@ -73,7 +73,7 @@ class MyoLegsGailTask(MyoLegsGailEnv):
         """
         prop_obs = self.compute_proprioception()
         task_obs = self.compute_task_obs()
-        return np.concatenate([prop_obs, task_obs])
+        return np.concatenate([task_obs, prop_obs])
 
     def create_viewer(self) -> None:
         """
