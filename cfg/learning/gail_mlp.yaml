@@ -13,6 +13,8 @@ opt_num_epochs: 10
 # GAIL Discriminator parameters
 batch_size_disc: 512
 epoch_disc: 2
+gail_lr: 2.e-5
+gail_noise_std: 0.1
 
 # Trajectory samples per epoch
 min_batch_size: 8192
@@ -45,8 +47,8 @@ tau: 0.95
 clip_epsilon: 0.2
 
 # Observation clippping
-clip_obs: False
-clip_obs_range: [-5.0, 5.0]
+clip_obs: True
+clip_obs_range: [-20.0, 20.0]
 
 
 policy_optimizer: "adam"

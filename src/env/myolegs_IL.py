@@ -64,7 +64,7 @@ class MyoLegsGAIL(MyoLegsGailTask):
             state_only=True
         )  # Stays on CPU
         
-        self.optim_disc = Adam(self.gail_disc.parameters(), lr=cfg.env.get("gail_lr", 1e-4))
+        self.optim_disc = Adam(self.gail_disc.parameters(), lr=cfg.learning.get("gail_lr", 1e-4))
         
         # Expert ghost visualization
         self.expert_ghost = ExpertGhost(self.mj_model, lateral_offset=-1.5)

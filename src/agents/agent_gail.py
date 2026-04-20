@@ -135,7 +135,7 @@ class AgentGAIL(AgentHumanoid):
 
             # INSTANCE NOISE: Prevents the discriminator from instantly solving the problem by 
             # memorizing clipped extremes (e.g., [5.0, 5.0]). Also adds continuous gradients.
-            noise_std = 0.1
+            noise_std = self.cfg.learning.get("gail_noise_std", 0.1)
             states_pi_noisy = states_pi_norm + torch.randn_like(states_pi_norm) * noise_std
             states_exp_noisy = states_exp_norm + torch.randn_like(states_exp_norm) * noise_std
 

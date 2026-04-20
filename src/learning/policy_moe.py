@@ -16,7 +16,10 @@ class PolicyMOE(Policy):
     def __init__(self, cfg, action_dim, state_dim, net_out_dim=None, freeze=True):
         super().__init__()
         self.type = "moe"
-        self.norm = RunningNorm(state_dim)
+        
+        # Respect clip_obs_range from configuration
+        clip_val = cfg.learning.clip_obs_range[1] if cfg.learning.clip_obs else 0
+        self.norm = RunningNorm(state_dim, clip=clip_val)
         if freeze and cfg.epoch == 0:
             state = torch.load(cfg.run.expert_path + "expert_0" + "/model.pth")
             self.norm.n = state["policy"]["norm.n"]

@@ -20,7 +20,10 @@ class PolicyGaussian(Policy):
     def __init__(self, cfg, action_dim, state_dim, net_out_dim=None):
         super().__init__()
         self.type = "gaussian"
-        self.norm = RunningNorm(state_dim)
+        
+        # Respect clip_obs_range from configuration
+        clip_val = cfg.learning.clip_obs_range[1] if cfg.learning.clip_obs else 0
+        self.norm = RunningNorm(state_dim, clip=clip_val)
         
         policy_hsize = cfg.learning.mlp.units
         policy_htype = cfg.learning.mlp.activation
