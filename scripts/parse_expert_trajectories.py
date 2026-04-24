@@ -93,12 +93,12 @@ def generate_trajectories(data_dir, output_path, target_freq=30.0):
                 raw_pos[:, i] = val
 
         # 2. 180-Degree Y-Rotation (Turn character around if walking in -X)
-        if raw_pos[-1, 0] < raw_pos[0, 0]:
-            raw_pos[:, 0] = -raw_pos[:, 0]  # tx
-            raw_pos[:, 2] = -raw_pos[:, 2]  # tz (if applicable)
-            raw_pos[:, 3] = -raw_pos[:, 3]  # pelvis_tilt
-            raw_pos[:, 4] = -raw_pos[:, 4]  # pelvis_list
-            raw_pos[:, 5] = raw_pos[:, 5] + np.pi # pelvis_rotation
+        # if raw_pos[-1, 0] < raw_pos[0, 0]:
+        #     raw_pos[:, 0] = -raw_pos[:, 0]  # tx
+        #     raw_pos[:, 2] = -raw_pos[:, 2]  # tz (if applicable)
+        #     raw_pos[:, 3] = -raw_pos[:, 3]  # pelvis_tilt
+        #     raw_pos[:, 4] = -raw_pos[:, 4]  # pelvis_list
+        #     raw_pos[:, 5] = raw_pos[:, 5] + np.pi # pelvis_rotation
         
         # 3. Heading Normalization (Center Yaw around 0)
         avg_yaw = np.mean(raw_pos[:, 5])
@@ -121,6 +121,10 @@ def generate_trajectories(data_dir, output_path, target_freq=30.0):
         # CLEANING: Clip velocity outliers that cause discriminator collapse
         TRANS_VEL_LIMIT, VEL_LIMIT = 5.0, 40.0
         diffs[:, 0:3] = np.clip(diffs[:, 0:3], -TRANS_VEL_LIMIT, TRANS_VEL_LIMIT)
+        
+        # TREADMILL OFFSET: Add the target speed to pelvis_tx to simulate overground traversal
+        diffs[:, 0] += speed
+        
         diffs[:, 3:16] = np.clip(diffs[:, 3:16], -VEL_LIMIT, VEL_LIMIT)
         
         resampled_vels[:-1] = diffs
@@ -130,9 +134,8 @@ def generate_trajectories(data_dir, output_path, target_freq=30.0):
         vel_indices = [0, 1, 2] + list(range(6, 16))
         obs_vels = resampled_vels[:, vel_indices]
         
-        # Sequence: [Angles 10] + [Vels 13] + [Pelvis Height 1] = 24D
-        height_col = resampled_raw_pos[:, 1:2]
-        obs_traj = np.concatenate([obs_angles, obs_vels, height_col], axis=1)
+        # Sequence: [Angles 10] + [Vels 13] = 23D (root height removed)
+        obs_traj = np.concatenate([obs_angles, obs_vels], axis=1)
         
         trajectories.append({
             'speed': speed,

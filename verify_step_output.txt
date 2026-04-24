@@ -15,9 +15,9 @@ Dimension                 | Mean       | Std
 07: hip_rot_l             |    -0.1543 |     0.0744
 08: knee_l                |    -0.3545 |     0.3764
 09: ankle_l               |    -0.1142 |     0.1146
-10: pelvis_tx             |     0.0057 |     0.1245
+10: pelvis_tx             |     0.7607 |     0.1478
 11: pelvis_ty             |     0.0038 |     0.1384
-12: pelvis_tz             |     0.0000 |     0.1075
+12: pelvis_tz             |     0.0014 |     0.1075
 13: hip_flex_r            |    -0.0118 |     1.7171
 14: hip_add_r             |     0.0071 |     0.4216
 15: hip_rot_r             |     0.0122 |     0.7161
@@ -43,784 +43,783 @@ Dimension                 | Mean       | Std
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -2.8499 | Max: 20.0000 | Mean: 0.5015
+     Min: -5.1457 | Max: 20.0000 | Mean: 0.3927
      First 20 vals: [-0.555  1.816  0.742  0.665  1.256 -0.919 -0.418  2.074  0.942  0.872
- -0.046 -0.028 -0.     0.007 -0.017 -0.017  0.009  0.015 -0.017  0.01 ]
+ -5.146 -0.028 -0.013  0.007 -0.017 -0.017  0.009  0.015 -0.017  0.01 ]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [ 1.2   0.    1.11  0.39  0.74 -0.83  0.88 -0.13  0.88 -0.49] (Angles)
-                        [ 0.23 -1.12 -0.36  0.39  0.16  0.53  0.55  0.11 -0.67  0.62  0.18  0.09
+                        [ 0.03 -1.12  0.35  0.39  0.16  0.53  0.55  0.11 -0.67  0.62  0.18  0.09
  -0.58] (Vels)
                         Root Height: 0.441
 
 [4] Reward Breakdown:
-Total Reward: 0.8298
-  - imitation_reward_gail: 0.5745
-  - velocity_reward: 0.1364
-  - upright_reward: 0.9998
-  - muscle_effort: 7.1934
+Total Reward: 0.9337
+  - imitation_reward_gail: 0.6114
+  - velocity_reward: 0.6769
+  - upright_reward: 0.8988
+  - muscle_effort: 8.2740
   - ankle_delta_penalty: 0.0000
-  - total_reward: 0.8298
+  - total_reward: 0.9337
 
 =============================================
 
 --- STEP 2 ---
 [1] Observations (Policy full state, 47D):
   -> GAIL History Vector (24D):
-     Frame t-0: [ 0.   -0.01  0.01  0.03 -0.1  -0.01 -0.02  0.12 -0.   -1.47] (Angles)
-                 [  -0.2     0.74   -0.09    0.66   -0.84    0.65    0.13   -4.31    2.39
-   -1.11    6.56   -6.47 -223.67] (Vels)
-                 Root Height: 0.922
+     Frame t-0: [-0.19 -0.02 -0.16  0.02  0.76 -0.18 -0.04  0.12  0.07 -1.91] (Angles)
+                 [  1.24   1.45  -0.48 -11.02  -2.03 -10.56   3.18  22.74  -5.81  -2.35
+   8.41  -1.16 -73.89] (Vels)
+                 Root Height: 0.934
 
   -> Proprioceptive Inputs (23D):
      target_speed (1D): [0.8]
-     muscle_act (22D): [0.339 0.098 0.    0.392 0.    0.871 1.066 0.    1.066 0.094 0.    0.683 0.079 0.692 0.372 0.402 0.447 1.066 0.135
- 1.066 1.066 1.066]
+     muscle_act (22D): [0.47  0.    1.066 0.251 0.327 0.968 0.    0.188 0.    0.    0.    0.929 0.45  0.837 0.415 0.529 0.935 0.    0.756
+ 1.066 1.066 0.   ]
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -20.0000 | Max: 20.0000 | Mean: 7.5658
-     First 20 vals: [ -0.549   1.683   0.892   0.751   0.515  -0.956  -0.682   3.689   0.941
- -11.871  -1.637   5.312  -0.871   0.394  -2.016   0.896   0.057  -5.459
-   1.757  -1.856]
+     Min: -20.0000 | Max: 20.0000 | Mean: 6.3922
+     First 20 vals: [ -1.207   1.458  -0.878   0.729   8.186  -1.665  -0.89    3.679   1.122
+ -15.671   3.254  10.432  -4.434  -6.411  -4.827 -14.767   1.243  20.
+  -4.327  -3.945]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [ 4.95 -5.33  4.57 -2.74 -3.23 -0.33  6.13  2.26  0.9  -3.05] (Angles)
-                        [ 15.41  20.    10.8  -20.    20.   -14.96  12.6   20.    -5.9  -20.
+                        [-12.75  20.   -10.82 -20.    20.   -14.96  12.6   20.    -5.9  -20.
   -4.26  -1.48   3.09] (Vels)
                         Root Height: -7.937
 
 [4] Reward Breakdown:
-Total Reward: 1.1977
-  - imitation_reward_gail: 0.8126
-  - velocity_reward: 0.8728
-  - upright_reward: 0.9752
-  - muscle_effort: 8.2059
+Total Reward: 1.1956
+  - imitation_reward_gail: 0.9284
+  - velocity_reward: 0.7683
+  - upright_reward: 0.5918
+  - muscle_effort: 6.4049
   - ankle_delta_penalty: 0.0000
-  - total_reward: 1.1977
+  - total_reward: 1.1956
 
 =============================================
 
 --- STEP 3 ---
 [1] Observations (Policy full state, 47D):
   -> GAIL History Vector (24D):
-     Frame t-0: [-0.04 -0.08 -0.19  0.01 -2.27  0.01 -0.05  0.32 -0.31 -1.44] (Angles)
-                 [  0.54   2.04  -0.3   -0.5   -2.84  -7.32  -3.11 -87.76  -0.34   0.1
-   5.05 -16.39  78.14] (Vels)
-                 Root Height: 0.974
+     Frame t-0: [-0.4  -0.13 -0.55 -0.17  0.67 -0.21 -0.07  0.42 -0.33 -0.85] (Angles)
+                 [  0.44   1.38  -0.27  -0.57  -4.37 -12.25 -13.88  -6.     2.59   0.7
+  10.57 -20.93  77.68] (Vels)
+                 Root Height: 0.987
 
   -> Proprioceptive Inputs (23D):
      target_speed (1D): [0.8]
-     muscle_act (22D): [0.155 0.057 1.055 0.94  0.765 0.51  1.009 0.911 1.009 0.055 0.    0.453 0.619 0.473 0.252 0.174 0.197 1.009 0.672
- 0.932 0.932 0.455]
+     muscle_act (22D): [0.19  0.175 1.009 0.146 0.932 0.463 0.998 0.099 1.066 0.093 0.    0.274 0.252 0.568 0.246 0.319 0.941 0.917 0.784
+ 0.957 0.473 0.935]
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -20.0000 | Max: 20.0000 | Mean: 8.7854
-     First 20 vals: [ -0.702   0.598  -1.181   0.683 -18.996  -0.858  -1.103   6.395   0.129
- -11.582   4.286  14.704  -2.822  -0.285  -6.753 -10.245  -1.196 -20.
-  -0.269   0.182]
+     Min: -17.1246 | Max: 20.0000 | Mean: 9.2547
+     First 20 vals: [ -1.942  -0.11   -4.881   0.135   7.439  -1.818  -1.278   7.688   0.057
+  -6.412  -2.19    9.962  -2.563  -0.325 -10.379 -17.125  -5.377  -7.599
+   1.902   1.19 ]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [ 0.96 -0.16  1.37  0.54  1.24 -1.68  0.89  0.51  0.82 -1.47] (Angles)
-                        [ 1.05 -0.77  1.59 -0.46 -0.12 -1.16 -0.01  1.5  -0.33 -0.64 -0.   -0.34
+                        [ 1.19 -0.77  1.57 -0.46 -0.12 -1.16 -0.01  1.5  -0.33 -0.64 -0.   -0.34
  -0.09] (Vels)
                         Root Height: -0.577
 
 [4] Reward Breakdown:
-Total Reward: 0.7184
-  - imitation_reward_gail: 0.5342
-  - velocity_reward: 0.1331
-  - upright_reward: 0.7227
-  - muscle_effort: 5.9213
+Total Reward: 0.8579
+  - imitation_reward_gail: 0.6209
+  - velocity_reward: 0.8943
+  - upright_reward: 0.4961
+  - muscle_effort: 9.0720
   - ankle_delta_penalty: 0.0000
-  - total_reward: 0.7184
+  - total_reward: 0.8579
 
 =============================================
 
 --- STEP 4 ---
 [1] Observations (Policy full state, 47D):
   -> GAIL History Vector (24D):
-     Frame t-0: [-0.27 -0.18 -0.51 -0.06 -1.88 -0.3  -0.11  0.55 -0.16 -1.51] (Angles)
-                 [   1.8     2.45   -0.43  -15.47   -1.78  -12.01   14.03   23.67  -17.3
-   -4.92    7.35   30.97 -180.95] (Vels)
-                 Root Height: 1.046
+     Frame t-0: [-0.38 -0.3  -0.68 -0.44 -0.94 -0.29 -0.12  0.75 -0.36 -1.1 ] (Angles)
+                 [  0.56   1.32  -0.13   0.31  -4.92   0.66  -4.31  -5.84  -8.49  -5.63
+  10.26  18.37 -58.  ] (Vels)
+                 Root Height: 1.032
 
   -> Proprioceptive Inputs (23D):
      target_speed (1D): [0.8]
-     muscle_act (22D): [0.085 0.036 0.994 0.468 0.484 0.828 0.383 0.862 0.767 0.033 0.265 0.252 0.818 0.943 0.188 0.975 0.113 0.725 0.873
- 0.951 0.992 0.779]
+     muscle_act (22D): [0.568 0.555 0.272 0.08  0.264 0.871 1.    0.077 1.009 0.335 0.522 0.926 0.403 0.792 0.834 0.71  0.376 0.846 0.866
+ 0.579 0.569 0.587]
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -20.0000 | Max: 20.0000 | Mean: 9.3081
-     First 20 vals: [ -1.51   -0.918  -4.444   0.475 -15.462  -2.172  -1.842   9.425   0.527
- -12.176  14.448  17.709  -4.006  -9.004  -4.233 -16.785   5.452  20.
- -12.847  -8.254]
+     Min: -20.0000 | Max: 20.0000 | Mean: 8.8289
+     First 20 vals: [ -1.888  -2.617  -6.149  -0.671  -7.076  -2.149  -1.968  12.162  -0.023
+  -8.637  -1.333   9.487  -1.22    0.189 -11.684   0.911  -1.665  -7.4
+  -6.31   -9.459]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [-0.02 -0.03 -0.09  0.62  0.58  0.58 -1.36 -0.71 -2.14  2.59] (Angles)
-                        [-0.08  0.49 -0.64 -0.77  0.08 -0.59  0.03 -1.18  1.7  -1.07 -0.95 -0.61
+                        [ 0.3   0.49  0.63 -0.77  0.08 -0.59  0.03 -1.18  1.7  -1.07 -0.95 -0.61
  -2.51] (Vels)
                         Root Height: 0.106
 
 [4] Reward Breakdown:
-Total Reward: 0.8365
-  - imitation_reward_gail: 0.7478
-  - velocity_reward: 0.1204
-  - upright_reward: 0.4838
-  - muscle_effort: 8.0572
+Total Reward: 0.8903
+  - imitation_reward_gail: 0.7941
+  - velocity_reward: 0.2148
+  - upright_reward: 0.4962
+  - muscle_effort: 9.5596
   - ankle_delta_penalty: 0.0000
-  - total_reward: 0.8365
+  - total_reward: 0.8903
 
 =============================================
 
 --- STEP 5 ---
 [1] Observations (Policy full state, 47D):
   -> GAIL History Vector (24D):
-     Frame t-0: [-0.41 -0.27 -0.75 -0.24 -1.14 -0.43 -0.14  0.5  -0.44 -0.71] (Angles)
-                 [ -0.23   1.24  -0.25   4.7   -4.21   0.58 -16.49  16.58   6.31   0.83
- -14.75 -22.17  44.81] (Vels)
-                 Root Height: 1.104
+     Frame t-0: [-0.33 -0.35 -0.51 -0.6   1.22 -0.33 -0.16  0.72 -0.39 -0.57] (Angles)
+                 [ -0.08   0.72   0.22   1.79   1.12   7.27  -2.7    2.96   5.63   5.56
+   3.08 -19.36  56.67] (Vels)
+                 Root Height: 1.065
 
   -> Proprioceptive Inputs (23D):
      target_speed (1D): [0.8]
-     muscle_act (22D): [0.603 0.368 0.27  0.202 0.194 0.31  0.917 0.877 0.976 0.059 0.355 0.957 0.35  0.371 0.643 0.893 0.322 0.717 0.844
- 0.784 0.785 0.466]
+     muscle_act (22D): [0.547 0.209 0.132 0.465 0.172 0.688 0.27  0.046 0.272 0.74  0.326 0.982 0.886 0.772 0.303 0.237 0.83  0.878 0.852
+ 0.801 0.78  0.805]
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -19.9205 | Max: 20.0000 | Mean: 9.6981
-     First 20 vals: [-1.992 -2.21  -6.816 -0.061 -8.823 -2.747 -2.207  8.759 -0.229 -5.196
- -1.884  8.945 -2.367  2.744 -9.997  0.793 -6.39  20.     4.658  1.413]
+     Min: -6.0050 | Max: 20.0000 | Mean: 11.0353
+     First 20 vals: [-1.722 -3.408 -4.472 -1.168 12.341 -2.318 -2.482 11.729 -0.087 -3.964
+ -5.667  5.208  2.023  1.047  2.648 10.139 -1.04   3.779  4.154  9.348]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [ 1.04  0.15  1.53  0.53  0.92 -1.51  0.71  1.42  0.86 -1.08] (Angles)
-                        [-0.25 -0.92 -1.   -0.58 -0.16 -1.07  0.09  2.26 -0.45 -0.37  0.15 -0.18
+                        [ 0.44 -0.92  0.98 -0.58 -0.16 -1.07  0.09  2.26 -0.45 -0.37  0.15 -0.18
  -0.2 ] (Vels)
                         Root Height: -0.306
 
 [4] Reward Breakdown:
-Total Reward: 0.6826
-  - imitation_reward_gail: 0.5551
-  - velocity_reward: 0.2069
-  - upright_reward: 0.6005
-  - muscle_effort: 9.4021
+Total Reward: 0.7278
+  - imitation_reward_gail: 0.5174
+  - velocity_reward: 0.7994
+  - upright_reward: 0.4793
+  - muscle_effort: 9.3337
   - ankle_delta_penalty: 0.0000
-  - total_reward: 0.6826
+  - total_reward: 0.7278
 
 =============================================
 
 --- STEP 6 ---
 [1] Observations (Policy full state, 47D):
   -> GAIL History Vector (24D):
-     Frame t-0: [-0.3  -0.28 -0.59 -0.29  2.11 -0.36 -0.13  0.62 -0.6  -0.86] (Angles)
-                 [ -0.09   1.31   0.06  -1.65   2.77   1.57  15.82  -2.44   1.05  -0.19
-   4.9    6.13 -90.88] (Vels)
-                 Root Height: 1.144
+     Frame t-0: [-0.37 -0.33 -0.5  -0.89 -4.11 -0.4  -0.09  0.68 -0.26 -0.93] (Angles)
+                 [  1.13   1.36  -0.03  -8.07   0.8   -9.44  -7.18  39.34 -10.97   0.05
+   2.79  24.13 -79.56] (Vels)
+                 Root Height: 1.098
 
   -> Proprioceptive Inputs (23D):
      target_speed (1D): [0.8]
-     muscle_act (22D): [0.659 0.163 0.946 0.88  0.231 0.145 0.669 0.903 0.268 0.81  0.159 0.995 0.296 0.501 0.803 0.26  0.397 0.911 0.856
- 0.946 0.563 0.623]
+     muscle_act (22D): [0.626 0.739 0.979 0.883 0.792 0.249 0.424 0.364 0.968 0.632 0.152 0.983 0.812 0.445 0.165 0.5   0.363 0.911 0.876
+ 0.563 0.563 0.676]
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -20.0000 | Max: 20.0000 | Mean: 10.3483
-     First 20 vals: [-1.597 -2.441 -5.214 -0.205 20.    -2.455 -2.087 10.369 -0.651 -6.528
- -0.75   9.45   0.528 -0.953  6.559  2.177  6.145 -3.082  0.758 -0.316]
+     Min: -20.0000 | Max: 20.0000 | Mean: 9.1766
+     First 20 vals: [ -1.849  -3.097  -4.374  -2.054 -20.     -2.601  -1.613  11.27    0.25
+  -7.093   2.529   9.812  -0.254  -4.696   1.875 -13.204  -2.778  20.
+  -8.149   0.092]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [-1.72  0.4  -0.96  0.49 -1.32  0.97  0.15 -0.35  0.29  1.26] (Angles)
-                        [ 1.42  1.71 -1.64  0.15 -0.28 -0.88 -1.32  2.4  -0.76 -0.18  0.54 -0.41
+                        [ 1.5   1.71 -1.65  0.15 -0.28 -0.88 -1.32  2.4  -0.76 -0.18  0.54 -0.41
  -0.48] (Vels)
                         Root Height: -0.896
 
 [4] Reward Breakdown:
-Total Reward: 1.0228
-  - imitation_reward_gail: 0.8531
-  - velocity_reward: 0.5797
-  - upright_reward: 0.5049
-  - muscle_effort: 9.7729
+Total Reward: 0.9560
+  - imitation_reward_gail: 0.7935
+  - velocity_reward: 0.2539
+  - upright_reward: 0.6152
+  - muscle_effort: 7.2815
   - ankle_delta_penalty: 0.0000
-  - total_reward: 1.0228
+  - total_reward: 0.9560
 
 =============================================
 
 --- STEP 7 ---
 [1] Observations (Policy full state, 47D):
   -> GAIL History Vector (24D):
-     Frame t-0: [-0.42 -0.23 -0.69 -0.22  1.47 -0.41 -0.03  0.78 -0.79 -0.2 ] (Angles)
-                 [  0.28   0.87  -0.14  -1.38   0.48  -4.1  -10.4  -16.01   1.33   4.76
-  -3.77 -20.12 101.01] (Vels)
-                 Root Height: 1.183
+     Frame t-0: [-0.39 -0.12 -0.55 -1.01 -2.46 -0.25  0.2   0.6  -0.64 -0.42] (Angles)
+                 [ -0.03   0.37   0.6    0.59   9.78   0.06   4.45  36.84  11.72  14.39
+  -2.88 -40.85 125.97] (Vels)
+                 Root Height: 1.121
 
   -> Proprioceptive Inputs (23D):
      target_speed (1D): [0.8]
-     muscle_act (22D): [0.228 0.091 0.992 0.276 0.313 0.136 0.569 0.87  0.959 0.361 0.392 0.999 0.889 0.531 0.634 0.577 0.913 0.882 0.824
- 0.926 0.78  0.561]
+     muscle_act (22D): [0.274 0.241 0.997 0.748 0.551 0.936 0.184 0.859 0.996 0.224 0.087 0.946 0.541 0.838 0.644 0.197 0.167 0.899 0.817
+ 0.78  0.78  0.476]
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -20.0000 | Max: 20.0000 | Mean: 10.1520
-     First 20 vals: [ -2.012  -1.637  -6.243   0.007  14.62   -2.65   -0.789  12.503  -1.17
-  -0.755   2.186   6.276  -1.307  -0.798   1.116  -5.746  -4.024 -20.
-   0.972   8.013]
+     Min: -20.0000 | Max: 20.0000 | Mean: 11.1059
+     First 20 vals: [ -1.899   0.09   -4.84   -2.408 -20.     -1.997   2.104  10.14   -0.758
+  -2.637  -5.334   2.668   5.588   0.351  20.      0.071   1.736  20.
+   8.673  20.   ]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [ 1.21 -0.36  0.72 -0.56  0.41 -0.53  0.35  0.08  0.69 -0.27] (Angles)
-                        [ 0.92 -0.74  0.12  0.05  0.33 -0.    2.13  0.64 -0.79  0.74  0.43  0.3
+                        [-0.55 -0.74 -0.13  0.05  0.33 -0.    2.13  0.64 -0.79  0.74  0.43  0.3
  -0.25] (Vels)
                         Root Height: 0.848
 
 [4] Reward Breakdown:
-Total Reward: 0.8406
-  - imitation_reward_gail: 0.5253
-  - velocity_reward: 0.9878
-  - upright_reward: 0.6214
-  - muscle_effort: 6.8708
+Total Reward: 0.8355
+  - imitation_reward_gail: 0.5244
+  - velocity_reward: 0.8782
+  - upright_reward: 0.6698
+  - muscle_effort: 6.5463
   - ankle_delta_penalty: 0.0000
-  - total_reward: 0.8406
+  - total_reward: 0.8355
 
 =============================================
 
 --- STEP 8 ---
 [1] Observations (Policy full state, 47D):
   -> GAIL History Vector (24D):
-     Frame t-0: [-0.32 -0.24 -0.51 -0.43  1.1  -0.36 -0.1   0.51 -0.72 -1.44] (Angles)
-                 [   0.88    1.4    -0.17   -7.51    2.09    0.2    13.25   -7.74  -14.13
-   -5.47   -0.34   33.17 -113.85] (Vels)
-                 Root Height: 1.208
+     Frame t-0: [-0.36  0.05 -0.53 -1.07 -1.57 -0.31  0.32  0.52 -0.47 -1.34] (Angles)
+                 [   1.05    1.15    0.17   -6.15    3.63   -1.8     9.72   16.93  -13.15
+   -2.33    0.38   33.16 -135.77] (Vels)
+                 Root Height: 1.139
 
   -> Proprioceptive Inputs (23D):
      target_speed (1D): [0.8]
-     muscle_act (22D): [0.317 0.151 0.999 0.565 0.156 0.476 0.296 0.911 0.995 0.256 0.24  0.955 0.619 0.719 0.234 0.669 0.587 0.461 0.816
- 0.991 0.563 0.606]
+     muscle_act (22D): [0.418 0.877 1.    0.483 0.208 0.992 0.119 0.798 0.27  0.14  0.218 0.874 0.83  0.733 0.804 0.417 0.839 0.836 0.817
+ 0.977 0.563 0.607]
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -20.0000 | Max: 20.0000 | Mean: 9.5335
-     First 20 vals: [ -1.662  -1.789  -4.386  -0.648  11.295  -2.431  -1.647   8.955  -0.977
- -11.615   7.011  10.11   -1.555  -4.367   4.94    0.257   5.147  -9.813
- -10.497  -9.189]
+     Min: -20.0000 | Max: 20.0000 | Mean: 9.8598
+     First 20 vals: [ -1.818   2.548  -4.671  -2.582 -12.688  -2.214   3.666   9.124  -0.315
+ -10.714   1.99    8.268   1.524  -3.577   8.584  -2.525   3.778  20.
+  -9.764  -3.911]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [-1.69  0.35 -1.17  0.14 -0.76  0.83  0.1  -0.19  0.17  1.07] (Angles)
-                        [ 0.88  2.1  -1.45  1.51 -2.32 -1.21 -2.67  2.5  -1.23 -0.02  0.48  0.1
+                        [ 1.05  2.1  -1.46  1.51 -2.32 -1.21 -2.67  2.5  -1.23 -0.02  0.48  0.1
  -0.33] (Vels)
                         Root Height: -0.524
 
 [4] Reward Breakdown:
-Total Reward: 1.0626
-  - imitation_reward_gail: 0.9109
-  - velocity_reward: 0.0625
-  - upright_reward: 0.6172
-  - muscle_effort: 4.6029
+Total Reward: 0.9241
+  - imitation_reward_gail: 0.7870
+  - velocity_reward: 0.0069
+  - upright_reward: 0.6976
+  - muscle_effort: 7.3468
   - ankle_delta_penalty: 0.0000
-  - total_reward: 1.0626
+  - total_reward: 0.9241
 
 =============================================
 
 --- STEP 9 ---
 [1] Observations (Policy full state, 47D):
   -> GAIL History Vector (24D):
-     Frame t-0: [-0.36 -0.18 -0.64 -0.45 -0.73 -0.27 -0.04  0.34 -1.2  -2.06] (Angles)
-                 [ -0.38  -0.03  -0.23   3.62  -0.01  -8.11  -8.89 -68.06   8.95  -0.14
- -11.11 -27.9   -7.08] (Vels)
-                 Root Height: 1.226
+     Frame t-0: [-0.32  0.13 -0.54 -1.09  1.05 -0.22  0.4   0.31 -1.26 -1.07] (Angles)
+                 [ -0.78  -0.72   0.22  11.74   0.79  -0.7  -10.51  39.07  25.66   7.18
+ -17.18 -98.57 192.04] (Vels)
+                 Root Height: 1.150
 
   -> Proprioceptive Inputs (23D):
      target_speed (1D): [0.8]
-     muscle_act (22D): [0.635 0.34  0.382 0.885 0.167 0.892 0.818 0.863 0.999 0.211 0.162 0.795 0.593 0.355 0.642 0.242 0.827 0.749 0.751
- 0.991 0.78  0.462]
+     muscle_act (22D): [0.753 0.273 0.57  0.891 0.856 0.736 0.829 0.848 0.968 0.327 0.629 0.705 0.388 0.827 0.647 0.651 0.906 0.816 0.751
+ 0.927 0.917 0.462]
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -20.0000 | Max: 20.0000 | Mean: 8.1142
-     First 20 vals: [ -1.802  -0.899  -5.795  -0.697  -5.19   -2.043  -0.977   6.629  -2.241
- -16.986  -3.079  -0.255  -2.161   2.118  -0.041 -11.34   -3.441 -20.
-   6.618  -0.219]
+     Min: -20.0000 | Max: 20.0000 | Mean: 10.4950
+     First 20 vals: [ -1.668   3.833  -4.768  -2.657  10.837  -1.864   4.656   6.175  -2.403
+  -8.312 -10.401  -5.204   1.994   6.843   1.867  -0.996  -4.07   20.
+  19.005  12.074]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [ 1.03 -0.14  1.4   0.53  0.95 -1.44  0.81  0.84  0.85 -1.37] (Angles)
-                        [ 0.84 -1.    1.26 -0.62  0.02 -0.8   0.07  2.31 -0.38 -0.74  0.24 -0.37
+                        [ 1.02 -1.    1.25 -0.62  0.02 -0.8   0.07  2.31 -0.38 -0.74  0.24 -0.37
  -0.85] (Vels)
                         Root Height: -0.438
 
 [4] Reward Breakdown:
-Total Reward: 1.0613
-  - imitation_reward_gail: 0.7742
-  - velocity_reward: 0.9415
-  - upright_reward: 0.5998
-  - muscle_effort: 8.1206
+Total Reward: 1.0106
+  - imitation_reward_gail: 0.8367
+  - velocity_reward: 0.0475
+  - upright_reward: 0.8030
+  - muscle_effort: 7.6551
   - ankle_delta_penalty: 0.0000
-  - total_reward: 1.0613
+  - total_reward: 1.0106
 
 =============================================
 
 --- STEP 10 ---
 [1] Observations (Policy full state, 47D):
   -> GAIL History Vector (24D):
-     Frame t-0: [-0.39 -0.12 -0.72 -0.56  3.16 -0.33 -0.12  0.18 -1.08 -0.52] (Angles)
-                 [  0.63   0.71   0.05  -9.77   8.84  -0.06  15.42 -24.25  -6.83   0.16
-  -4.59   9.39  56.18] (Vels)
-                 Root Height: 1.239
+     Frame t-0: [-0.27 -0.02 -0.59 -0.81 -3.56 -0.45  0.08 -0.   -1.35 -0.99] (Angles)
+                 [ -0.43  -0.44  -0.46   3.49  -1.93  -5.83  13.12 -16.75   2.03  -6.13
+  -7.01 -17.37  82.81] (Vels)
+                 Root Height: 1.155
 
   -> Proprioceptive Inputs (23D):
      target_speed (1D): [0.8]
-     muscle_act (22D): [0.282 0.155 0.963 0.858 0.824 0.27  0.916 0.894 1.    0.15  0.156 0.88  0.614 0.56  0.263 0.144 0.949 0.469 0.868
- 0.953 0.652 0.711]
+     muscle_act (22D): [0.582 0.475 0.31  0.379 0.279 0.933 0.971 0.887 0.268 0.195 0.509 0.57  0.169 0.703 0.859 0.854 0.715 0.56  0.498
+ 0.99  0.494 0.652]
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -20.0000 | Max: 20.0000 | Mean: 10.6466
-     First 20 vals: [ -1.928  -0.032  -6.547  -1.038  20.     -2.307  -1.98    4.504  -1.932
-  -3.563   4.987   5.076   0.51   -5.682  20.     -0.103   5.991 -20.
-  -5.083   0.276]
+     Min: -20.0000 | Max: 20.0000 | Mean: 8.2171
+     First 20 vals: [ -1.495   1.501  -5.216  -1.784 -20.     -2.835   0.546   2.068  -2.644
+  -7.615  -8.085  -3.199  -4.337   2.038  -4.604  -8.155   5.097 -20.
+   1.489 -10.296]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [ 1.24  0.04  1.41  0.51  0.69 -0.78  1.05 -0.62  0.73 -0.69] (Angles)
-                        [ 0.69 -0.79 -0.6   0.42  0.88  0.74  0.2   0.1  -0.94  0.27  0.24  0.24
+                        [-0.35 -0.79  0.59  0.42  0.88  0.74  0.2   0.1  -0.94  0.27  0.24  0.24
  -0.38] (Vels)
                         Root Height: 0.435
 
 [4] Reward Breakdown:
-Total Reward: 0.9119
-  - imitation_reward_gail: 0.7454
-  - velocity_reward: 0.1663
-  - upright_reward: 0.6822
-  - muscle_effort: 7.1351
+Total Reward: 0.8908
+  - imitation_reward_gail: 0.6478
+  - velocity_reward: 0.2790
+  - upright_reward: 0.8797
+  - muscle_effort: 7.6773
   - ankle_delta_penalty: 0.0000
-  - total_reward: 0.9119
+  - total_reward: 0.8908
 
 =============================================
 
 --- STEP 11 ---
 [1] Observations (Policy full state, 47D):
   -> GAIL History Vector (24D):
-     Frame t-0: [-0.34 -0.11 -0.61 -0.65 -3.48 -0.37 -0.22  0.11 -0.83 -1.22] (Angles)
-                 [ -0.15  -0.15  -0.14   4.    -4.83  -4.84 -14.79 -21.71  -2.91  -2.19
-   1.44   8.12 -23.27] (Vels)
-                 Root Height: 1.244
+     Frame t-0: [ 0.01 -0.21 -0.74 -0.71  3.13 -0.36 -0.05  0.1  -1.3  -0.89] (Angles)
+                 [  0.     0.27   0.05   1.93  -1.2   -0.95  21.13  -2.27  -2.19  -1.52
+   7.76  19.23 -49.33] (Vels)
+                 Root Height: 1.140
 
   -> Proprioceptive Inputs (23D):
      target_speed (1D): [0.8]
-     muscle_act (22D): [0.608 0.096 0.995 0.79  0.262 0.187 0.306 0.796 0.271 0.34  0.211 0.906 0.62  0.72  0.806 0.096 0.592 0.454 0.558
- 0.952 0.562 0.611]
+     muscle_act (22D): [0.415 0.209 0.966 0.187 0.227 0.441 0.982 0.918 0.13  0.13  0.481 0.778 0.682 0.317 0.301 0.256 0.972 0.888 0.772
+ 0.999 0.642 0.825]
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -20.0000 | Max: 20.0000 | Mean: 7.8330
-     First 20 vals: [ -1.743   0.22   -5.492  -1.306 -20.     -2.478  -3.179   3.56   -1.272
-  -9.648  -1.227  -1.104  -1.283   2.337 -11.481  -6.781  -5.73  -20.
-  -2.172  -3.676]
+     Min: -20.0000 | Max: 20.0000 | Mean: 9.7919
+     First 20 vals: [-0.512 -1.276 -6.804 -1.508 20.    -2.449 -1.041  3.394 -2.517 -6.782
+ -5.138  1.916  0.46   1.132 -2.861 -1.35   8.205 -2.871 -1.637 -2.545]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [-0.5   0.46 -0.91  0.63 -0.33  1.21 -1.41 -1.46 -1.8  -0.52] (Angles)
-                        [-0.42  0.18  0.24 -0.57 -0.66 -0.04  0.01 -0.85  0.18  1.61 -1.69  1.9
+                        [-0.05  0.18  0.23 -0.57 -0.66 -0.04  0.01 -0.85  0.18  1.61 -1.69  1.9
   0.17] (Vels)
                         Root Height: 0.281
 
 [4] Reward Breakdown:
-Total Reward: 0.8156
-  - imitation_reward_gail: 0.6369
-  - velocity_reward: 0.1708
-  - upright_reward: 0.7147
-  - muscle_effort: 6.9916
+Total Reward: 1.0242
+  - imitation_reward_gail: 0.8487
+  - velocity_reward: 0.1529
+  - upright_reward: 0.7812
+  - muscle_effort: 8.9455
   - ankle_delta_penalty: 0.0000
-  - total_reward: 0.8156
+  - total_reward: 1.0242
 
 =============================================
 
 --- STEP 12 ---
 [1] Observations (Policy full state, 47D):
   -> GAIL History Vector (24D):
-     Frame t-0: [-0.32 -0.09 -0.69 -0.53  1.8  -0.37 -0.16  0.35 -0.8  -0.57] (Angles)
-                 [ -0.14  -0.26   0.47  -3.81   7.18   0.23  31.67 105.11   0.17   4.65
-   9.93  -4.93  62.36] (Vels)
-                 Root Height: 1.234
+     Frame t-0: [ 0.11 -0.27 -0.67 -0.44  2.14 -0.37 -0.05  0.46 -1.08 -0.57] (Angles)
+                 [ -0.17  -0.72   0.04   5.38  -2.59   6.42  -3.65 -25.58   4.3    3.22
+  15.07 -18.15 121.34] (Vels)
+                 Root Height: 1.131
 
   -> Proprioceptive Inputs (23D):
      target_speed (1D): [0.8]
-     muscle_act (22D): [0.237 0.758 0.999 0.898 0.778 0.629 0.9   0.913 0.132 0.305 0.449 0.619 0.799 0.843 0.652 0.591 0.545 0.868 0.385
- 0.779 0.78  0.804]
+     muscle_act (22D): [0.501 0.108 0.393 0.391 0.344 0.587 0.269 0.908 0.993 0.642 0.282 0.977 0.385 0.821 0.408 0.274 0.306 0.848 0.815
+ 0.785 0.78  0.463]
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -6.2714 | Max: 20.0000 | Mean: 12.0549
-     First 20 vals: [-1.675  0.416 -6.271 -0.941 17.529 -2.494 -2.418  6.835 -1.179 -4.009
- -1.171 -1.917  4.335 -2.213 17.007  0.308 12.295 20.     0.11   7.832]
+     Min: -20.0000 | Max: 20.0000 | Mean: 10.4993
+     First 20 vals: [ -0.173  -2.157  -6.074  -0.683  20.     -2.501  -1.069   8.194  -1.927
+  -3.972  -6.289  -5.222   0.39    3.142  -6.168   8.944  -1.407 -20.
+   3.17    5.43 ]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [-0.24  0.49 -0.45  0.62  0.22  0.62 -2.17 -1.36 -2.22  0.64] (Angles)
-                        [-0.11  0.5   0.67 -0.65 -0.82 -0.4   0.02 -0.82  1.44  0.62 -1.    0.46
+                        [ 0.21  0.5   0.66 -0.65 -0.82 -0.4   0.02 -0.82  1.44  0.62 -1.    0.46
  -1.55] (Vels)
                         Root Height: 0.164
 
 [4] Reward Breakdown:
-Total Reward: 1.0337
-  - imitation_reward_gail: 0.7830
-  - velocity_reward: 0.5192
-  - upright_reward: 0.7246
-  - muscle_effort: 7.0562
+Total Reward: 0.9012
+  - imitation_reward_gail: 0.5644
+  - velocity_reward: 0.9342
+  - upright_reward: 0.7869
+  - muscle_effort: 8.6154
   - ankle_delta_penalty: 0.0000
-  - total_reward: 1.0337
+  - total_reward: 0.9012
 
 =============================================
 
 --- STEP 13 ---
 [1] Observations (Policy full state, 47D):
   -> GAIL History Vector (24D):
-     Frame t-0: [-0.32 -0.06 -0.64 -0.26 -1.75 -0.39 -0.15  0.59 -0.56 -0.87] (Angles)
-                 [  0.23  -0.09  -0.27  -1.32  -4.75   1.47   0.68 -85.99 -10.41  -7.07
-   5.92  31.81 -65.65] (Vels)
-                 Root Height: 1.218
+     Frame t-0: [-0.05 -0.28 -0.38  0.13  1.32 -0.4  -0.17  0.8  -0.5  -1.79] (Angles)
+                 [   0.98    0.65   -0.71  -17.24   -1.35    6.37   32.74  -17.85  -11.3
+  -13.33    3.97   53.34 -170.11] (Vels)
+                 Root Height: 1.127
 
   -> Proprioceptive Inputs (23D):
      target_speed (1D): [0.8]
-     muscle_act (22D): [0.468 0.7   1.    0.908 0.427 0.277 0.571 0.863 0.993 0.153 0.194 0.493 0.835 0.685 0.261 0.85  0.887 0.923 0.85
- 0.563 0.574 0.612]
+     muscle_act (22D): [0.316 0.13  0.373 0.798 0.908 0.45  0.969 0.874 0.27  0.31  0.419 0.784 0.82  0.402 0.807 0.133 0.22  0.647 0.802
+ 0.977 0.563 0.771]
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -20.0000 | Max: 20.0000 | Mean: 8.4220
-     First 20 vals: [ -1.677   0.905  -5.697  -0.137 -14.344  -2.559  -2.332  10.006  -0.538
-  -6.557   1.782  -0.646  -2.48   -0.764 -11.291   2.035   0.273 -20.
-  -7.739 -11.864]
+     Min: -20.0000 | Max: 20.0000 | Mean: 9.1360
+     First 20 vals: [ -0.73   -2.353  -3.125   1.049  13.235  -2.604  -2.57   12.771  -0.397
+ -14.584   1.514   4.662  -6.649 -10.031  -3.211   8.872  12.712 -20.
+  -8.393 -20.   ]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [ 0.03  0.48 -0.34  0.62  0.61  0.32 -1.45 -0.11 -2.04  1.69] (Angles)
-                        [ 0.21  0.41 -0.89 -0.69  0.19 -0.87  0.03 -1.01  2.02 -0.48 -0.16 -0.72
+                        [ 0.05  0.41  0.87 -0.69  0.19 -0.87  0.03 -1.01  2.02 -0.48 -0.16 -0.72
  -1.45] (Vels)
                         Root Height: 0.006
 
 [4] Reward Breakdown:
-Total Reward: 0.9498
-  - imitation_reward_gail: 0.7807
-  - velocity_reward: 0.2841
-  - upright_reward: 0.6621
-  - muscle_effort: 8.6305
+Total Reward: 0.7294
+  - imitation_reward_gail: 0.4834
+  - velocity_reward: 0.9950
+  - upright_reward: 0.4623
+  - muscle_effort: 9.1673
   - ankle_delta_penalty: 0.0000
-  - total_reward: 0.9498
+  - total_reward: 0.7294
 
 =============================================
 
 --- STEP 14 ---
 [1] Observations (Policy full state, 47D):
   -> GAIL History Vector (24D):
-     Frame t-0: [-0.37 -0.06 -0.65 -0.05 -1.32 -0.37 -0.17  0.33 -0.7  -0.85] (Angles)
-                 [  0.01  -0.67   0.09  -6.62   5.65  -0.91  20.53  21.7   11.19   8.42
-  -7.95 -56.9  135.6 ] (Vels)
-                 Root Height: 1.197
+     Frame t-0: [-0.21 -0.46 -0.4  -0.49 -3.39 -0.4  -0.28  0.77 -0.83 -0.9 ] (Angles)
+                 [  0.75   0.3   -0.86  -7.66  -4.48  -7.03 -29.24  28.68  -8.1   -7.17
+  -2.3   13.38 -42.84] (Vels)
+                 Root Height: 1.133
 
   -> Proprioceptive Inputs (23D):
      target_speed (1D): [0.8]
-     muscle_act (22D): [0.287 0.244 0.998 0.325 0.886 0.181 0.935 0.9   0.999 0.225 0.102 0.925 0.474 0.351 0.642 0.733 0.48  0.835 0.804
- 0.801 0.78  0.47 ]
+     muscle_act (22D): [0.19  0.297 0.165 0.405 0.89  0.883 0.978 0.872 0.131 0.769 0.626 0.723 0.445 0.564 0.792 0.605 0.9   0.72  0.76
+ 0.612 0.607 0.315]
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -17.6628 | Max: 20.0000 | Mean: 10.5108
-     First 20 vals: [ -1.828   0.861  -5.885   0.501 -10.492  -2.486  -2.58    6.46   -0.909
-  -6.441   0.009  -4.843   0.836  -3.849  13.386  -1.284   7.973  20.
-   8.279  14.152]
+     Min: -20.0000 | Max: 20.0000 | Mean: 7.9899
+     First 20 vals: [ -1.3    -5.077  -3.323  -0.815 -20.     -2.62   -4.073  12.469  -1.253
+  -6.895  -0.072   2.152  -7.967  -4.456 -10.635  -9.838 -11.334  20.
+  -6.022 -12.037]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [-0.97  0.12 -0.65  0.63 -1.37  1.06  0.54  0.06  0.73  0.61] (Angles)
-                        [-0.43 -1.11  0.39 -0.65  0.91  0.2  -0.02 -0.98 -0.39 -0.26  2.28  0.56
+                        [ 0.59 -1.11 -0.4  -0.65  0.91  0.2  -0.02 -0.98 -0.39 -0.26  2.28  0.56
  -0.54] (Vels)
                         Root Height: -0.175
 
 [4] Reward Breakdown:
-Total Reward: 0.7680
-  - imitation_reward_gail: 0.6179
-  - velocity_reward: 0.1243
-  - upright_reward: 0.6369
-  - muscle_effort: 6.5893
+Total Reward: 0.6487
+  - imitation_reward_gail: 0.5833
+  - velocity_reward: 0.0670
+  - upright_reward: 0.4960
+  - muscle_effort: 9.6802
   - ankle_delta_penalty: 0.0000
-  - total_reward: 0.7680
+  - total_reward: 0.6487
 
 =============================================
 
 --- STEP 15 ---
 [1] Observations (Policy full state, 47D):
   -> GAIL History Vector (24D):
-     Frame t-0: [-0.37 -0.1  -0.45 -0.08  2.19 -0.39 -0.22 -0.03 -0.92 -1.03] (Angles)
-                 [ -0.22  -1.06  -0.29   3.45  -4.45   7.54 -15.12   2.04   1.8   -3.22
- -10.89  -3.36 -97.72] (Vels)
-                 Root Height: 1.165
+     Frame t-0: [-0.33 -0.36 -0.48 -0.91 -3.24 -0.43 -0.26  0.16 -1.   -1.23] (Angles)
+                 [ -0.36  -1.54  -0.23   3.77   0.7   -1.26 -11.08  19.07   0.1   -7.24
+ -31.39   3.13  40.08] (Vels)
+                 Root Height: 1.100
 
   -> Proprioceptive Inputs (23D):
      target_speed (1D): [0.8]
-     muscle_act (22D): [0.164 0.124 1.    0.305 0.259 0.211 0.527 0.892 0.27  0.176 0.756 0.563 0.295 0.193 0.742 0.485 0.416 0.485 0.853
- 0.979 0.793 0.874]
+     muscle_act (22D): [0.101 0.159 0.984 0.185 0.26  0.887 0.634 0.776 0.993 0.245 0.233 0.936 0.184 0.367 0.861 0.219 0.263 0.5   0.444
+ 0.763 0.437 0.645]
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -20.0000 | Max: 20.0000 | Mean: 8.8776
-     First 20 vals: [ -1.861   0.314  -3.825   0.417  20.     -2.553  -3.191   1.688  -1.511
-  -8.005  -1.822  -7.666  -2.654   2.017 -10.571  10.51   -5.856   2.6
-   1.319  -5.406]
+     Min: -20.0000 | Max: 20.0000 | Mean: 8.6511
+     First 20 vals: [ -1.693  -3.528  -4.085  -2.09  -20.     -2.747  -3.803   4.256  -1.715
+  -9.75   -7.597 -11.167  -2.175   2.204   1.655  -1.772  -4.288  20.
+   0.059 -12.15 ]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [-0.33  0.28 -0.61  0.62  0.    1.24 -1.6  -0.99 -2.04 -0.15] (Angles)
-                        [ 0.29  0.28 -0.27 -0.57 -0.44 -0.24  0.03 -0.84  0.65  1.21 -1.01  1.39
+                        [-0.01  0.28  0.25 -0.57 -0.44 -0.24  0.03 -0.84  0.65  1.21 -1.01  1.39
  -0.5 ] (Vels)
                         Root Height: 0.287
 
 [4] Reward Breakdown:
-Total Reward: 1.1302
-  - imitation_reward_gail: 0.9428
-  - velocity_reward: 0.0183
-  - upright_reward: 0.8260
-  - muscle_effort: 6.4046
+Total Reward: 0.7726
+  - imitation_reward_gail: 0.5793
+  - velocity_reward: 0.1898
+  - upright_reward: 0.8084
+  - muscle_effort: 8.7177
   - ankle_delta_penalty: 0.0000
-  - total_reward: 1.1302
+  - total_reward: 0.7726
 
 =============================================
 
 --- STEP 16 ---
 [1] Observations (Policy full state, 47D):
   -> GAIL History Vector (24D):
-     Frame t-0: [-0.2  -0.15 -0.29 -0.24  1.68 -0.24 -0.15  0.19 -0.94 -0.77] (Angles)
-                 [ -0.61  -2.19   0.02   1.02   0.8   -0.67   8.29 -13.42  10.03   4.9
-  11.84 -22.63 104.56] (Vels)
-                 Root Height: 1.102
+     Frame t-0: [ 0.04 -0.26 -0.42 -1.25 -1.42 -0.37 -0.18 -0.56 -0.87 -1.28] (Angles)
+                 [ -0.11  -1.7    1.5   12.12   6.48   8.09  -8.76 131.01   2.04  14.21
+  -1.98  24.79 -75.99] (Vels)
+                 Root Height: 1.032
 
   -> Proprioceptive Inputs (23D):
      target_speed (1D): [0.8]
-     muscle_act (22D): [0.179 0.071 0.988 0.417 0.137 0.383 0.92  0.898 0.968 0.678 0.52  0.366 0.616 0.764 0.696 0.197 0.949 0.839 0.744
- 0.924 0.767 0.5  ]
+     muscle_act (22D): [0.143 0.324 0.998 0.974 0.246 0.259 0.249 0.624 0.27  0.362 0.347 0.557 0.098 0.689 0.769 0.694 0.129 0.934 0.869
+ 0.976 0.963 0.347]
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -17.0229 | Max: 20.0000 | Mean: 10.2874
-     First 20 vals: [ -1.26   -0.449  -2.207  -0.067  16.425  -1.954  -2.279   4.619  -1.543
-  -5.683  -4.982 -15.847   0.218   0.601   1.872  -0.948   3.225 -17.023
-   7.423   8.236]
+     Min: -20.0000 | Max: 20.0000 | Mean: 10.0554
+     First 20 vals: [ -0.415  -2.129  -3.558  -3.144 -11.371  -2.474  -2.77   -5.402  -1.381
+ -10.151  -5.9   -12.347  13.94    7.067  15.348  11.273  -3.388  20.
+   1.494  20.   ]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [ 1.11 -0.28  0.72 -0.21  0.51 -0.97  0.3   0.53  0.78 -0.56] (Angles)
-                        [-0.55 -1.03  0.27 -0.23  0.56  0.51  1.95  0.72 -1.02  0.74  0.54  0.27
+                        [-0.16 -1.03  0.26 -0.23  0.56  0.51  1.95  0.72 -1.02  0.74  0.54  0.27
  -0.33] (Vels)
                         Root Height: 0.707
 
 [4] Reward Breakdown:
-Total Reward: 0.8160
-  - imitation_reward_gail: 0.5840
-  - velocity_reward: 0.5470
-  - upright_reward: 0.7064
-  - muscle_effort: 8.9311
+Total Reward: 1.0647
+  - imitation_reward_gail: 0.8260
+  - velocity_reward: 0.4554
+  - upright_reward: 0.7988
+  - muscle_effort: 9.2018
   - ankle_delta_penalty: 0.0000
-  - total_reward: 0.8160
+  - total_reward: 1.0647
 
 =============================================
 
 --- STEP 17 ---
 [1] Observations (Policy full state, 47D):
   -> GAIL History Vector (24D):
-     Frame t-0: [-0.26 -0.22 -0.57 -0.23  1.23 -0.25 -0.07  0.63 -0.74 -2.89] (Angles)
-                 [   0.25   -0.8     0.19   -3.     -5.76  -12.84   -6.91   -9.79  -13.61
-   -6.88   12.9    49.41 -282.76] (Vels)
-                 Root Height: 1.053
+     Frame t-0: [ 0.26 -0.09 -0.26 -1.34  2.61 -0.1   0.13 -0.34 -1.09 -0.39] (Angles)
+                 [  0.17  -0.95   0.73   2.81   3.79   5.1    0.31 -23.24   6.04   6.24
+   5.04  -5.5   -1.27] (Vels)
+                 Root Height: 0.984
 
   -> Proprioceptive Inputs (23D):
      target_speed (1D): [0.8]
-     muscle_act (22D): [0.598 0.461 0.269 0.867 0.723 0.675 0.981 0.887 0.996 0.236 0.202 0.656 0.577 0.291 0.278 0.233 0.859 0.748 0.737
- 0.991 0.867 0.604]
+     muscle_act (22D): [0.12  0.15  1.    0.907 0.188 0.969 0.919 0.315 0.968 0.944 0.615 0.241 0.14  0.936 0.302 0.375 0.077 0.885 0.522
+ 0.997 0.926 0.302]
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -20.0000 | Max: 20.0000 | Mean: 8.4068
-     First 20 vals: [ -1.448  -1.541  -5.034  -0.031  12.419  -1.995  -1.331  10.565  -1.018
- -20.      1.969  -5.789   1.796  -1.741 -13.678 -17.942  -2.673 -12.416
- -10.107 -11.556]
+     Min: -20.0000 | Max: 20.0000 | Mean: 10.2545
+     First 20 vals: [  0.343   0.436  -1.936  -3.411  20.     -1.353   1.206  -2.556  -1.959
+  -2.364  -3.977  -6.86    6.789   1.645   8.974   7.104   0.129 -20.
+   4.46   10.491]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [ 0.17  0.28  0.06  0.6   0.96 -0.31 -1.09 -0.75 -1.46  1.29] (Angles)
-                        [ 0.02  0.39 -1.06 -0.6   0.54 -1.21  0.05 -1.11  2.92 -1.72  0.9  -1.74
+                        [ 0.21  0.39  1.05 -0.6   0.54 -1.21  0.05 -1.11  2.92 -1.72  0.9  -1.74
   1.72] (Vels)
                         Root Height: -0.070
 
 [4] Reward Breakdown:
-Total Reward: 0.9274
-  - imitation_reward_gail: 0.8219
-  - velocity_reward: 0.2027
-  - upright_reward: 0.4674
-  - muscle_effort: 7.5281
+Total Reward: 1.3092
+  - imitation_reward_gail: 0.9100
+  - velocity_reward: 0.8586
+  - upright_reward: 0.9362
+  - muscle_effort: 5.3424
   - ankle_delta_penalty: 0.0000
-  - total_reward: 0.9274
+  - total_reward: 1.3092
 
 =============================================
 
 --- STEP 18 ---
 [1] Observations (Policy full state, 47D):
   -> GAIL History Vector (24D):
-     Frame t-0: [-0.46 -0.21 -0.66 -0.02 -1.93 -0.17 -0.02  0.67 -1.61  0.2 ] (Angles)
-                 [ -0.09  -2.27   0.55   1.65   4.8   16.01   8.24   3.14   4.77  14.25
- -12.58 -60.42 304.16] (Vels)
-                 Root Height: 1.013
+     Frame t-0: [ 0.15 -0.01 -0.08 -1.15  0.16 -0.11  0.23 -0.24 -1.07 -1.05] (Angles)
+                 [   0.52   -0.12   -0.4    -9.25    2.16    5.71   15.17 -100.37   -8.9
+    2.43    3.7    11.03  -15.26] (Vels)
+                 Root Height: 0.964
 
   -> Proprioceptive Inputs (23D):
      target_speed (1D): [0.8]
-     muscle_act (22D): [0.246 0.189 0.147 0.309 0.297 0.794 0.329 0.898 0.27  0.459 0.279 0.765 0.214 0.541 0.399 0.444 0.496 0.625 0.626
- 0.874 0.576 0.602]
+     muscle_act (22D): [0.071 0.082 1.    0.408 0.667 0.953 0.747 0.774 0.268 0.367 0.573 0.971 0.68  0.721 0.803 0.418 0.046 0.976 0.741
+ 0.554 0.661 0.873]
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -18.7558 | Max: 20.0000 | Mean: 10.2228
-     First 20 vals: [ -2.15   -1.335  -5.913   0.589 -15.984  -1.655  -0.712  11.096  -3.347
-   2.711  -0.796 -16.451   5.137   0.966  11.364  20.      3.204   4.003
-   3.523  20.   ]
+     Min: -20.0000 | Max: 20.0000 | Mean: 9.2255
+     First 20 vals: [ -0.04    1.688  -0.036  -2.835   2.859  -1.401   2.482  -1.1    -1.893
+  -8.167  -1.601  -0.908  -3.771  -5.382   5.11    7.96    5.895 -20.
+  -6.619   4.094]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [ 1.2  -0.09  0.75 -1.03  0.18 -0.2   0.06  0.03  0.3  -0.77] (Angles)
-                        [ 1.1  -0.43  0.17  0.02  0.74  0.12  2.38  0.86 -0.62  0.2   0.2   0.12
+                        [-0.7  -0.43 -0.18  0.02  0.74  0.12  2.38  0.86 -0.62  0.2   0.2   0.12
  -0.32] (Vels)
                         Root Height: 0.805
 
 [4] Reward Breakdown:
-Total Reward: 0.8777
-  - imitation_reward_gail: 0.7645
-  - velocity_reward: 0.1373
-  - upright_reward: 0.5514
-  - muscle_effort: 7.9705
+Total Reward: 1.0297
+  - imitation_reward_gail: 0.6399
+  - velocity_reward: 0.9306
+  - upright_reward: 0.9491
+  - muscle_effort: 8.1071
   - ankle_delta_penalty: 0.0000
-  - total_reward: 0.8777
+  - total_reward: 1.0297
 
 =============================================
 
 --- STEP 19 ---
 [1] Observations (Policy full state, 47D):
   -> GAIL History Vector (24D):
-     Frame t-0: [-0.3  -0.33 -0.18 -0.35  2.55 -0.44  0.02  0.08 -0.91 -1.65] (Angles)
-                 [ -0.2   -1.84  -0.07  12.23  -4.04   9.77 -24.83 -11.18  -4.96  -2.13
- -25.24  -2.07  99.72] (Vels)
-                 Root Height: 0.969
+     Frame t-0: [-0.12  0.05  0.15 -0.9  -0.99 -0.34  0.24 -0.11 -1.06 -0.37] (Angles)
+                 [  0.61   0.03  -0.36 -10.04   3.09   8.77   7.07  13.05  -7.12   1.54
+   5.07   0.27   8.38] (Vels)
+                 Root Height: 0.953
 
   -> Proprioceptive Inputs (23D):
      target_speed (1D): [0.8]
-     muscle_act (22D): [0.145 0.112 0.988 0.953 0.485 0.977 0.908 0.901 0.131 0.259 0.505 0.954 0.118 0.768 0.715 0.947 0.821 0.344 0.762
- 0.691 0.763 0.501]
+     muscle_act (22D): [0.093 0.618 1.    0.564 0.574 0.338 0.952 0.475 0.13  0.635 0.476 0.745 0.948 0.933 0.459 0.214 0.896 0.96  0.817
+ 0.965 0.969 0.96 ]
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -20.0000 | Max: 20.0000 | Mean: 8.9968
-     First 20 vals: [ -1.615  -3.063  -1.097  -0.404  20.     -2.796  -0.192   3.211  -1.486
- -13.39   -1.624 -13.353  -0.682   7.13   -9.6    13.632  -9.622 -14.183
-  -3.695  -3.57 ]
+     Min: -7.5169 | Max: 20.0000 | Mean: 10.4107
+     First 20 vals: [-0.982  2.553  2.28  -2.086 -7.517 -2.364  2.683  0.549 -1.865 -2.202
+ -1.017  0.19  -3.381 -5.839  7.305 12.232  2.75  16.591 -5.297  2.596]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [-0.99  0.53 -0.23  0.62 -1.28  1.12  0.04 -1.45  0.48  0.71] (Angles)
-                        [-0.68 -1.24  0.36 -0.58  0.55  0.38 -0.01 -1.01 -0.54  0.06  2.63  1.21
+                        [ 0.8  -1.24 -0.38 -0.58  0.55  0.38 -0.01 -1.01 -0.54  0.06  2.63  1.21
  -0.49] (Vels)
                         Root Height: -0.097
 
 [4] Reward Breakdown:
-Total Reward: 0.7026
-  - imitation_reward_gail: 0.5660
-  - velocity_reward: 0.0294
-  - upright_reward: 0.6234
-  - muscle_effort: 5.6326
+Total Reward: 0.7538
+  - imitation_reward_gail: 0.5877
+  - velocity_reward: 0.3298
+  - upright_reward: 0.6430
+  - muscle_effort: 9.2744
   - ankle_delta_penalty: 0.0000
-  - total_reward: 0.7026
+  - total_reward: 0.7538
 
 =============================================
 
 --- STEP 20 ---
 [1] Observations (Policy full state, 47D):
   -> GAIL History Vector (24D):
-     Frame t-0: [-0.04 -0.4  -0.36 -0.52 -3.38 -0.25  0.19 -0.56 -0.65 -2.01] (Angles)
-                 [  -0.53   -1.44    0.76   -4.56    0.93   -8.83   13.83   15.4    -6.57
-   13.16  -11.07   56.06 -203.69] (Vels)
-                 Root Height: 0.892
+     Frame t-0: [-0.38  0.05  0.16 -0.66  1.18 -0.34  0.27 -0.01 -1.29 -0.57] (Angles)
+                 [  0.06  -0.79   0.07  -2.77  -1.19  -6.33   4.43  36.47   2.52   0.16
+   3.54  -2.94 -37.47] (Vels)
+                 Root Height: 0.937
 
   -> Proprioceptive Inputs (23D):
      target_speed (1D): [0.8]
-     muscle_act (22D): [0.336 0.065 0.269 0.356 0.327 0.798 0.281 0.922 0.074 0.437 0.49  0.965 0.651 0.581 0.781 0.491 0.286 0.57  0.793
- 0.971 0.651 0.637]
+     muscle_act (22D): [0.592 0.652 1.    0.42  0.516 0.775 0.993 0.669 0.073 0.224 0.557 0.242 0.266 0.76  0.239 0.356 0.264 0.879 0.331
+ 0.996 0.279 0.397]
 
 [2] Normalised Observations (PPO Policy Internal RunningNorm):
   -> 47D Vector Statistics:
-     Min: -20.0000 | Max: 20.0000 | Mean: 8.6591
-     First 20 vals: [ -0.686  -4.106  -2.924  -0.925 -20.     -1.963   1.976  -5.484  -0.773
- -16.546  -4.286 -10.457   7.099  -2.649   2.195 -12.345   5.373  19.566
-  -4.889  20.   ]
+     Min: -20.0000 | Max: 20.0000 | Mean: 9.6344
+     First 20 vals: [-1.88   2.596  2.329 -1.333 11.938 -2.344  2.993  1.955 -2.474 -3.978
+ -4.772 -5.725  0.597 -1.607 -2.831 -8.853  1.729 20.     1.851  0.279]
 
   -> (Note: The first 24 dimensions of this normalizer are automatically applied to the Discriminator inputs. The expert data seeding procedure locked these values.)
 
 [3] Expert Data Fed to Discriminator (Matching V=0.80, 24D):
     (This is normalized by the PRE-SEEDED PPO Normalizer over the first 24 indices)
      Expert Frame t-0: [ 1.26  0.39  1.31  0.51  0.77 -1.03  0.59 -0.07  0.42 -1.59] (Angles)
-                        [ 0.26 -0.84 -0.52 -0.07  0.59  0.8   0.11  0.13 -1.04  0.21  0.34  0.21
+                        [ 0.01 -0.84  0.51 -0.07  0.59  0.8   0.11  0.13 -1.04  0.21  0.34  0.21
  -0.3 ] (Vels)
                         Root Height: 0.129
 
 [4] Reward Breakdown:
-Total Reward: 0.6030
-  - imitation_reward_gail: 0.5492
-  - velocity_reward: 0.0257
-  - upright_reward: 0.3881
-  - muscle_effort: 6.7731
+Total Reward: 1.0244
+  - imitation_reward_gail: 0.8250
+  - velocity_reward: 0.2333
+  - upright_reward: 0.7288
+  - muscle_effort: 6.5930
   - ankle_delta_penalty: 0.0000
-  - total_reward: 0.6030
+  - total_reward: 1.0244
 
 =============================================
 

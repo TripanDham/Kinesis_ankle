@@ -117,10 +117,8 @@ class MyoLegsGAIL(MyoLegsGailTask):
 
         self.curr_proprioception = angles # Used for height/upright rewards
         
-        # 3. Root Height
-        root_height = np.array([self.mj_data.qpos[1]], dtype=self.dtype)
-        
-        return np.concatenate([angles, vels, root_height])
+        # 3. Root Height is removed from discriminator state
+        return np.concatenate([angles, vels])
 
     def compute_task_obs(self) -> np.ndarray:
         """Returns the concatenated temporal history of disc observations."""
@@ -245,64 +243,55 @@ class MyoLegsGAIL(MyoLegsGailTask):
             # A reward of 2.0 corresponds to D=0.86, which is a strong signal but not destabilizing.
             im_reward = np.clip(im_reward, 0.0, 2.0)
             
-        vel_reward = self.compute_velocity_reward()
+        dist_reward = self.compute_distance_reward()
         upright_reward = self.compute_upright_reward()
         
         # Split Energy Reward
         muscle_effort = self.compute_muscle_effort(action)
+        motor_effort = self.compute_motor_effort(action)
         
-        # Ankle Delta Penalty (replaces motor effort)
-        # self.delta_ankle_action is non-zero only on the 10th step update
+        # Ankle Delta Penalty (for multi-rate impedance)
         w_ankle_delta = self.cfg.env.reward_specs.get("w_ankle_delta", 0.01)
         ankle_delta_penalty = np.sum(np.square(self.delta_ankle_action))
         
+        w_muscle = self.cfg.env.reward_specs.get("w_energy", 0.01)
+        w_motor = self.cfg.env.reward_specs.get("w_motor_effort", 0.1)
+
         reward = (1.0 * im_reward + 
-                  0.2 * vel_reward + 
+                  0.2 * dist_reward + 
                   0.3 * upright_reward - 
-                  0.01 * muscle_effort - 
+                  w_muscle * muscle_effort - 
+                  w_motor * motor_effort -
                   w_ankle_delta * ankle_delta_penalty)
         
         self.reward_info = {
             "imitation_reward_gail": im_reward, 
-            "velocity_reward": vel_reward,
+            "distance_reward": dist_reward,
             "upright_reward": upright_reward,
             "muscle_effort": muscle_effort,
+            "motor_effort": motor_effort,
             "ankle_delta_penalty": ankle_delta_penalty,
             "total_reward": reward
         }
         return reward
 
-    def compute_velocity_reward(self) -> float:
-        """Rewards matching the 3D velocity vector to the target direction vector."""
-        # Root lin vel is in qvel[0:3]
-        actual_v = self.mj_data.qvel[0:3]
-        target_v = np.array([self.target_speed, 0, 0])
-        
-        # Dot product reward
-        # v_actual · v_target
-        dot = np.dot(actual_v, target_v)
-        # Normalize by target speed squared to keep range around 0-1
-        vel_reward = np.exp(-2 * (self.target_speed - dot/self.target_speed)**2) if self.target_speed > 0.01 else 1.0
-        return vel_reward
+    def compute_distance_reward(self) -> float:
+        """Rewards the absolute forward distance moved by the pelvis."""
+        if getattr(self, 'cur_t', 0) <= 1 or not hasattr(self, 'start_pelvis_x'):
+            self.start_pelvis_x = self.mj_data.qpos[0]
+            
+        distance = self.mj_data.qpos[0] - self.start_pelvis_x
+        return float(distance)
 
     def compute_muscle_effort(self, action: np.ndarray) -> float:
         """Computes effort penalty for biological muscles."""
         if action is None: return 0.0
-        # If not active gains, the entire action vector is biological muscles
-        if not self.active_gains:
-            return np.sum(np.square(action))
-        
-        # Otherwise, use the indices
         muscle_acts = action[self.muscle_idx]
         return np.sum(np.square(muscle_acts))
 
     def compute_motor_effort(self, action: np.ndarray) -> float:
-        """Computes effort penalty for prosthetic motors."""
+        """Computes effort penalty for prosthetic motors (impedance params or direct torque)."""
         if action is None: return 0.0
-        # If not active gains, motors are not in the action space
-        if not self.active_gains:
-            return 0.0
-            
         motor_acts = action[self.motor_idx]
         return np.sum(np.square(motor_acts))
 
@@ -326,7 +315,7 @@ class MyoLegsGAIL(MyoLegsGailTask):
     def compute_reset(self) -> Tuple[bool, bool]:
         """Basic stability and time-based reset."""
         # Y-up model: pelvis_ty (index 1) is the height
-        fell = self.mj_data.qpos[1] < 0.5 
+        fell = self.mj_data.qpos[1] < 0.5 or self.mj_data.qpos[1] > 1.2
         truncated = self.cur_t >= self.max_episode_length
         return fell, truncated
 

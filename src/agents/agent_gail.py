@@ -81,6 +81,14 @@ class AgentGAIL(AgentHumanoid):
         """
         Trains the discriminator using agent rollouts and expert demonstrations.
         """
+        # Linear Warmup Schedule for Discriminator LR
+        target_lr = 2e-5
+        warmup_epochs = 3000
+        current_lr = target_lr * min(1.0, self.epoch / warmup_epochs) if hasattr(self, 'epoch') else target_lr
+        
+        for param_group in self.env.optim_disc.param_groups:
+            param_group['lr'] = current_lr
+
         to_train(self.env.gail_disc)
         metrics = {"loss_disc": [], "loss_pi": [], "loss_exp": []}
         

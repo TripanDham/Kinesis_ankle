@@ -330,7 +330,9 @@ class MyoLegsGailEnv(BaseEnv):
         else:
             # Action for motors (Direct torque)
             motor_action = action[self.motor_idx]
-            motor_ctrl = 2.88 * motor_action
+            x = np.clip(motor_action, -0.9999, 0.9999)
+            scaled_action = 0.5 * np.log((0.5 * (x + 1)) / (1 - 0.5 * (x + 1)))
+            motor_ctrl = 2.88 * scaled_action
             self.last_impedance = {}
 
         if self.control_mode == "PD":
