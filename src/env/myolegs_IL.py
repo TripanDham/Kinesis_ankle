@@ -133,30 +133,54 @@ class MyoLegsGAIL(MyoLegsGailTask):
         return np.concatenate(hist)
 
     def get_task_obs_size(self) -> int:
-        """Size of the GAIL history state (e.g. 24 * history_len)."""
-        return 24 * self.history_len
+        """Size of the GAIL history state (e.g. 23 * history_len)."""
+        return 23 * self.history_len
 
 
     def init_myolegs(self):
         """
-        Initializes the MyoLegs environment using the 'stand' keyframe if available.
+        Initializes the MyoLegs environment by loading the 'walk_right' keyframe,
+        then overwrites the 10 tracked joint angles AND the 3 pelvis angles with 
+        hardcoded expert values from tf01_0p6_01_rotated_ik.mot (Frame 0).
+        All velocities are zeroed.
         """
         try:
-            stand_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_KEY, 'stand')
-            logger.info(f"Loading 'stand' keyframe (id: {stand_id})")
+            # 1. Load 'walk_right' keyframe for full qpos/qvel state baseline
+            stand_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_KEY, 'walk_right')
             if stand_id != -1:
                 self.mj_data.qpos[:] = self.mj_model.key_qpos[stand_id]
-                self.mj_data.qvel[:] = self.mj_model.key_qvel[stand_id]
+                logger.info(f"Loaded 'walk_right' keyframe (id: {stand_id}) as baseline.")
             else:
-                # Fallback if 'stand' key is missing
                 self.mj_data.qpos[:] = 0
-                self.mj_data.qvel[:] = 0
-                self.mj_data.qpos[1] = 0.91 # Standing height (pelvis_ty, Y-up model)
+                self.mj_data.qpos[1] = 0.88 # Fallback height
+                logger.warning("Could not find 'walk_right' keyframe. Using zeroed qpos baseline.")
+
+            # 2. Set all velocities to zero
+            self.mj_data.qvel[:] = 0
+            
+            # 3. Overwrite only the 10 Tracked Joint Angles from tf01_0p6_01_rotated_ik.mot (Frame 0)
+            expert_angles = [
+                0.4657, -0.1353, 0.0303, -0.0529, -0.0815, 
+                0.0175, 0.0639, -0.1207, -0.0127, -0.1504
+            ]
+            
+            for i, idx in enumerate(self.obs_qpos_idx):
+                self.mj_data.qpos[idx] = expert_angles[i]
+            
+            # 4. Overwrite Pelvis Angles from tf01_0p6_01_rotated_ik.mot (Frame 0)
+            # Rad: tilt: -0.1177, list: 0.0512, rotation: -0.0129
+            # Based on XML order: pelvis_tx(0), ty(1), tz(2), tilt(3), list(4), rotation(5)
+            self.mj_data.qpos[3] = -0.1177
+            self.mj_data.qpos[4] = 0.0512
+            self.mj_data.qpos[5] = -0.0129
+
+            logger.info("Initialized with walk_right baseline, expert joints + pelvis angles, and zeroed velocities.")
+
         except Exception as e:
-            logger.warning(f"Could not load 'stand' keyframe: {e}. Using default pose.")
+            logger.warning(f"Error during init_myolegs: {e}")
             self.mj_data.qpos[:] = 0
             self.mj_data.qvel[:] = 0
-            self.mj_data.qpos[1] = 0.91
+            self.mj_data.qpos[1] = 0.88
             
         mujoco.mj_kinematics(self.mj_model, self.mj_data)
 
@@ -257,7 +281,11 @@ class MyoLegsGAIL(MyoLegsGailTask):
         w_muscle = self.cfg.env.reward_specs.get("w_energy", 0.01)
         w_motor = self.cfg.env.reward_specs.get("w_motor_effort", 0.1)
 
-        reward = (1.0 * im_reward + 
+        # DELAYED GAIL START: Ignore imitation reward before 3000 epochs
+        current_epoch = getattr(self, 'current_epoch', 0)
+        im_weight = 1.0 if current_epoch >= 3000 else 0.0
+
+        reward = (im_weight * im_reward + 
                   0.2 * dist_reward + 
                   0.3 * upright_reward - 
                   w_muscle * muscle_effort - 

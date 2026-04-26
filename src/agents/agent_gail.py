@@ -77,15 +77,22 @@ class AgentGAIL(AgentHumanoid):
         
         return time.time() - t0, disc_metrics
 
+    def sample_trajectories(self):
+        # Inject the current epoch into the environment so it can scale the im_reward
+        self.env.current_epoch = getattr(self, 'epoch', 0)
+        return super().sample_trajectories()
+
     def train_discriminator(self, batch) -> dict:
         """
         Trains the discriminator using agent rollouts and expert demonstrations.
         """
-        # Linear Warmup Schedule for Discriminator LR
-        target_lr = 2e-5
-        warmup_epochs = 3000
-        current_lr = target_lr * min(1.0, self.epoch / warmup_epochs) if hasattr(self, 'epoch') else target_lr
+        epoch = getattr(self, 'epoch', 0)
         
+        # DELAYED START: Skip GAIL entirely for the first 3000 epochs
+        if epoch < 3000:
+            return {"loss_disc": 0.0, "loss_pi": 0.0, "loss_exp": 0.0}
+            
+        current_lr = 2e-5
         for param_group in self.env.optim_disc.param_groups:
             param_group['lr'] = current_lr
 

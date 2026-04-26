@@ -218,3 +218,86 @@ def plot_biomechanics(all_biomechanics, env):
     print(f"Dashboard saved to: {output_path}")
     print(f"Indices: Ankle R Act={ankle_act_idx} (Gear={gear_ankle:.1f}), Knee L DOF={knee_l_dof}")
     print(f"="*80 + "\n")
+
+    # Also plot the exact GAIL observations dashboard
+    plot_gail_obs_dashboard(all_biomechanics, env)
+
+def plot_gail_obs_dashboard(all_biomechanics, env):
+    """Plots the exact 24D GAIL observation state for the agent's test runs."""
+    logger.info("Generating 24D GAIL Observation Dashboard...")
+    
+    min_len = min(len(ep) for ep in all_biomechanics)
+    if min_len == 0: return
+    num_eps = len(all_biomechanics)
+
+    def get_jnt(name):
+        try: return env.mj_model.joint(name)
+        except: return None
+
+    # Determine prosthetic ankle/knee names
+    knee_r_name = "osl_knee_angle_r" if get_jnt("osl_knee_angle_r") else "knee_angle_r"
+    ankle_r_name = "osl_ankle_angle_r" if get_jnt("osl_ankle_angle_r") else "ankle_angle_r"
+
+    angle_names = [
+        "hip_flexion_r", "hip_adduction_r", "hip_rotation_r", knee_r_name, ankle_r_name,
+        "hip_flexion_l", "hip_adduction_l", "hip_rotation_l", "knee_angle_l", "ankle_angle_l"
+    ]
+    
+    vel_names = ["pelvis_tx", "pelvis_ty", "pelvis_tz"] + angle_names
+
+    DIM_LABELS = [
+        'hip_flexion_r_angle', 'hip_adduction_r_angle', 'hip_rotation_r_angle', 'knee_angle_r_angle', 'ankle_angle_r_angle',
+        'hip_flexion_l_angle', 'hip_adduction_l_angle', 'hip_rotation_l_angle', 'knee_angle_l_angle', 'ankle_angle_l_angle',
+        'pelvis_tx_vel', 'pelvis_ty_vel', 'pelvis_tz_vel',
+        'hip_flexion_r_vel', 'hip_adduction_r_vel', 'hip_rotation_r_vel', 'knee_angle_r_vel', 'ankle_angle_r_vel',
+        'hip_flexion_l_vel', 'hip_adduction_l_vel', 'hip_rotation_l_vel', 'knee_angle_l_vel', 'ankle_angle_l_vel',
+        'root_height (pelvis_ty)'
+    ]
+
+    # Pre-allocate 24D data: shape (num_eps, min_len, 24)
+    data_24d = np.zeros((num_eps, min_len, 24))
+
+    # Get addresses safely
+    qpos_addrs = [get_jnt(n).qposadr[0] if get_jnt(n) else 0 for n in angle_names]
+    qvel_addrs = [get_jnt(n).dofadr[0] if get_jnt(n) else 0 for n in vel_names]
+    pelvis_ty_qpos = get_jnt("pelvis_ty").qposadr[0] if get_jnt("pelvis_ty") else 1
+
+    for ep_idx in range(num_eps):
+        for t in range(min_len):
+            step_data = all_biomechanics[ep_idx][t]
+            qpos = step_data["qpos"]
+            qvel = step_data["qvel"]
+            
+            # 10 Angles
+            for i, addr in enumerate(qpos_addrs):
+                data_24d[ep_idx, t, i] = qpos[addr]
+                
+            # 13 Velocities
+            for i, addr in enumerate(qvel_addrs):
+                data_24d[ep_idx, t, 10 + i] = qvel[addr]
+                
+            # 1 Root Height
+            data_24d[ep_idx, t, 23] = qpos[pelvis_ty_qpos]
+
+    rows, cols = 6, 4
+    fig = make_subplots(rows=rows, cols=cols, subplot_titles=DIM_LABELS, vertical_spacing=0.05)
+
+    def add_shaded_trace(fig, data, name, row, col, color="blue"):
+        mean = np.mean(data, axis=0)
+        std = np.std(data, axis=0)
+        x = np.arange(len(mean))
+        fig.add_trace(go.Scatter(x=list(x)+list(x)[::-1], y=list(mean+std)+list(mean-std)[::-1],
+                                 fill='toself', fillcolor=f'rgba({color}, 0.2)', line=dict(color='rgba(255,255,255,0)'),
+                                 showlegend=False), row=row, col=col)
+        fig.add_trace(go.Scatter(x=x, y=mean, line=dict(color=f'rgb({color})'), name=f"{name} Mean", showlegend=(row==1 and col==1)), row=row, col=col)
+
+    for dim in range(24):
+        r = (dim // cols) + 1
+        c = (dim % cols) + 1
+        add_shaded_trace(fig, data_24d[:, :, dim], "Agent Run", r, c, "31, 119, 180")
+
+    fig.update_layout(height=1500, width=1800, title_text="Agent Evaluation: 24D GAIL Observations", template='plotly_dark')
+    
+    output_path = os.path.abspath(os.path.join(os.path.dirname("biomechanics_dashboard.html"), "agent_gail_obs_dashboard.html"))
+    fig.write_html(output_path)
+    logger.info(f"Agent GAIL Dashboard saved to: {output_path}")
