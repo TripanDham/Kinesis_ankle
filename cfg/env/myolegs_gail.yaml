@@ -23,6 +23,7 @@ reward_specs:
   w_pos: 0.6
   w_upright: 1.0
   w_vel: 0.2
+  w_state_oob: 0.1
 sim_timestep_inv: 150
 task: MyoLegs OSL_KA GAIL
 termination_distance: 0.15

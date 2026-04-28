@@ -9,7 +9,7 @@ import logging
 from src.agents.agent_humanoid import AgentHumanoid
 from src.env.myolegs_IL import MyoLegsGAIL
 from src.KinesisCore.expert_dataset import get_expert_loader
-from src.learning.learning_utils import to_train, to_test, to_device
+from src.learning.learning_utils import to_train, to_test, to_device, to_cpu
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +21,11 @@ class AgentGAIL(AgentHumanoid):
     def __init__(self, cfg, dtype, device, training: bool = True, checkpoint_epoch: int = 0):
         super().__init__(cfg, dtype, device, training, checkpoint_epoch)
         
+        # Force sync history_len with env regardless of training/test mode
+        self.history_len = self.env.history_len 
+        
         # Expert buffer for discriminator training
         if training:
-            self.history_len = self.env.history_len # Forced sync with env
             self.batch_size_disc = cfg.learning.get("batch_size_disc", 64)
             self.loader_exp = get_expert_loader(
                 path=cfg.run.expert_buffer_path,
@@ -177,3 +179,92 @@ class AgentGAIL(AgentHumanoid):
         self.env.gail_disc.to("cpu")
         
         return {k: np.mean(v) for k, v in metrics.items()}
+    def eval_policy(self, runs: int = 10, dump: bool = False) -> dict:
+        """
+        Extended evaluation that computes and visualizes discriminator saliency.
+        """
+        logger.info(f"Running evaluation with Discriminator Saliency for {runs} episodes...")
+        
+        # 1. Prepare Feature Names for the Heatmap
+        base_names = self.env.get_gail_feature_names()
+        feature_names = []
+        # History in MyoLegsGAIL is [current, previous, ...]
+        for h in range(self.env.history_len):
+            suffix = f" (t-{h})" if h > 0 else " (t)"
+            feature_names.extend([n + suffix for n in base_names])
+
+        all_saliency = []
+        
+        # 2. Run Evaluation with Gradients Enabled for Saliency
+        with to_test(*self.sample_modules):
+            with to_cpu(*self.sample_modules):
+                # Keep Discriminator on CPU to match policy/normalizer device in this block
+                self.env.gail_disc.to("cpu")
+                self.env.gail_disc.eval()
+                
+                # Get device from policy (which should be 'cpu' now)
+                device = next(self.policy_net.parameters()).device
+                
+                for i in range(runs):
+                    obs_dict, info = self.env.reset()
+                    state = self.preprocess_obs(obs_dict)
+                    
+                    episode_saliency = []
+                    
+                    # We only collect saliency for the first ~500 steps to keep the heatmap readable
+                    for t in range(500): 
+                        # A. Select Action (No Grad)
+                        with torch.no_grad():
+                            actions = self.policy_net.select_action(
+                                torch.from_numpy(state).to(self.dtype).to(device), True
+                            )[0].numpy()
+
+                        # B. Compute Discriminator Saliency (With Grad)
+                        gail_obs_size = self.env.get_task_obs_size()
+                        gail_state = torch.from_numpy(state[:, :gail_obs_size]).to(self.dtype).to(device)
+                        gail_state.requires_grad = True
+                        
+                        # Normalize state using policy's normalizer (same as training)
+                        self.policy_net.norm.eval()
+                        padded = torch.zeros(1, self.policy_net.norm.dim, device=device, dtype=self.dtype)
+                        padded[:, :gail_obs_size] = gail_state
+                        norm_state = self.policy_net.norm(padded)[:, :gail_obs_size]
+                        
+                        # Forward pass through discriminator
+                        logits = self.env.gail_disc(norm_state)
+                        
+                        # Backward pass to get gradients w.r.t input state
+                        self.env.gail_disc.zero_grad()
+                        logits.backward()
+                        
+                        # Saliency = Magnitude of gradients
+                        saliency = gail_state.grad.abs().squeeze().cpu().numpy()
+                        episode_saliency.append(saliency)
+
+                        # C. Step Environment
+                        next_obs, reward, terminated, truncated, info = self.env.step(
+                            self.preprocess_actions(actions)
+                        )
+                        state = self.preprocess_obs(next_obs)
+                        
+                        if not self.headless:
+                            self.env.render()
+                            
+                        if terminated or truncated:
+                            break
+                    
+                    if episode_saliency:
+                        all_saliency.append(np.array(episode_saliency))
+                        logger.info(f"Episode {i} saliency collected ({len(episode_saliency)} steps)")
+
+                # 3. Visualization
+                if all_saliency:
+                    from src.utils.biomechanics_plotter import plot_discriminator_saliency
+                    # Plot the first episode's saliency map
+                    plot_discriminator_saliency(all_saliency[0], feature_names)
+        
+        # 4. Cleanup: Move discriminator back to CPU for sampling worker compatibility
+        self.env.gail_disc.to("cpu")
+        
+        # Run standard evaluation for biomechanics plots
+        return super().eval_policy(runs=runs, dump=dump)

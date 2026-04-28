@@ -137,6 +137,19 @@ class MyoLegsGAIL(MyoLegsGailTask):
         return 23 * self.history_len
 
 
+    def get_gail_feature_names(self):
+        """Returns the list of 23 feature names used in each frame of the GAIL state."""
+        # 1. Angles (10D)
+        right_leg_names = ["hip_flexion_r", "hip_adduction_r", "hip_rotation_r", "knee_angle_r", "osl_ankle_angle_r"]
+        left_leg_names = ["hip_flexion_l", "hip_adduction_l", "hip_rotation_l", "knee_angle_l", "ankle_angle_l"]
+        angle_names = right_leg_names + left_leg_names
+        
+        # 2. Velocities (13D)
+        root_vel_names = ["pelvis_tx_v", "pelvis_ty_v", "pelvis_tz_v"]
+        vel_names = root_vel_names + [n + "_v" for n in angle_names]
+        
+        return angle_names + vel_names
+
     def init_myolegs(self):
         """
         Initializes the MyoLegs environment by loading the 'walk_right' keyframe,
@@ -157,24 +170,30 @@ class MyoLegsGAIL(MyoLegsGailTask):
 
             # 2. Set all velocities to zero
             self.mj_data.qvel[:] = 0
-            
-            # 3. Overwrite only the 10 Tracked Joint Angles from tf01_0p6_01_rotated_ik.mot (Frame 0)
-            expert_angles = [
-                0.4657, -0.1353, 0.0303, -0.0529, -0.0815, 
-                0.0175, 0.0639, -0.1207, -0.0127, -0.1504
-            ]
+            self.mj_data.qpos[1] = 0.89
+            # 3. Overwrite only the 10 Tracked Joint Angles (Frame 0 of 0p4_01_rotated_ik.mot)
+            expert_angles = [0.4650, -0.1353, 0.0303, 0.0529, 0.0815, 0.0175, 0.0639, -0.1207, 0.0127, 0.1504]
+            # File: /media/tripan/Data/DDP/amputee_data/training_data_tf02_0p4/0p4_01_rotated_ik.mot
+            # expert_angles = [
+            #     0.4650, -0.1770, -0.1489, -0.8497, -0.0427, # Right Leg (Inverted knee/ankle)
+            #     0.5475, -0.0114, -0.1414, -0.2828, -0.1639  # Left Leg (Inverted knee/ankle)
+            # ]
             
             for i, idx in enumerate(self.obs_qpos_idx):
                 self.mj_data.qpos[idx] = expert_angles[i]
             
-            # 4. Overwrite Pelvis Angles from tf01_0p6_01_rotated_ik.mot (Frame 0)
-            # Rad: tilt: -0.1177, list: 0.0512, rotation: -0.0129
-            # Based on XML order: pelvis_tx(0), ty(1), tz(2), tilt(3), list(4), rotation(5)
+            # 4. Overwrite Pelvis Angles (Frame 0 of 0p4_01_rotated_ik.mot)
+            # Degrees: tilt: -20.5815, list: 2.0785, rotation: -7.6137
+            # tf01_0p6_01
             self.mj_data.qpos[3] = -0.1177
-            self.mj_data.qpos[4] = 0.0512
-            self.mj_data.qpos[5] = -0.0129
+            self.mj_data.qpos[4] = 0.0512 
+            self.mj_data.qpos[5] = -0.0129 
+            # tf02_0p4_01
+            # self.mj_data.qpos[3] = -0.3592 
+            # self.mj_data.qpos[4] = 0.0363  
+            # self.mj_data.qpos[5] = -0.1329 
 
-            logger.info("Initialized with walk_right baseline, expert joints + pelvis angles, and zeroed velocities.")
+            logger.info("Initialized with walk_right baseline, expert (tf01_0p6_01) joints + pelvis angles, and zeroed velocities.")
 
         except Exception as e:
             logger.warning(f"Error during init_myolegs: {e}")
@@ -252,6 +271,10 @@ class MyoLegsGAIL(MyoLegsGailTask):
     def create_task_visualization(self):
         pass
 
+    def set_normalizer(self, normalizer):
+        """Sets the normalizer reference to allow reward-time state checking."""
+        self.normalizer = normalizer
+
     def compute_reward(self, action: Optional[np.ndarray] = None) -> float:
         """GAIL Reward using the Discriminator + Velocity Matching."""
         gail_obs = self.compute_task_obs()
@@ -281,6 +304,30 @@ class MyoLegsGAIL(MyoLegsGailTask):
         w_muscle = self.cfg.env.reward_specs.get("w_energy", 0.01)
         w_motor = self.cfg.env.reward_specs.get("w_motor_effort", 0.1)
 
+        # # Simple Ankle Out-of-Bounds Penalty (-5 if > +/- 20 degrees)
+        # j_ankle = self.mj_model.joint("osl_ankle_angle_r").id
+        # q_ankle = self.mj_data.qpos[self.mj_model.jnt_qposadr[j_ankle]]
+        # limit_rad = 20 * np.pi / 180.0
+        # ankle_limit_penalty = 5.0 if np.abs(q_ankle) > limit_rad else 0.0
+
+        # NEW: State-wide Out-of-Bounds Penalty (based on normalizer)
+        state_oob_penalty = 0.0
+        if hasattr(self, 'normalizer') and self.normalizer is not None and self.normalizer.n > 1000:
+            # We use the normalizer's clip value (usually 5.0) as the "out-of-bounds" threshold
+            norm_clip = getattr(self.normalizer, 'clip', 5.0)
+            with torch.no_grad():
+                # Normalize the current task observation (slice normalizer to match gail_obs)
+                gail_obs_size = len(gail_obs)
+                mean = self.normalizer.mean[:gail_obs_size].cpu().numpy()
+                std = self.normalizer.std[:gail_obs_size].cpu().numpy()
+                normalized_obs = (gail_obs - mean) / (std + 1e-8)
+                
+                # Penalize only the magnitude exceeding the clip threshold
+                excess = np.maximum(0, np.abs(normalized_obs) - norm_clip)
+                state_oob_penalty = np.sum(np.square(excess))
+        
+        w_state_oob = self.cfg.env.reward_specs.get("w_state_oob", 0.1)
+
         # DELAYED GAIL START: Ignore imitation reward before 3000 epochs
         current_epoch = getattr(self, 'current_epoch', 0)
         im_weight = 1.0 if current_epoch >= 3000 else 0.0
@@ -290,7 +337,8 @@ class MyoLegsGAIL(MyoLegsGailTask):
                   0.3 * upright_reward - 
                   w_muscle * muscle_effort - 
                   w_motor * motor_effort -
-                  w_ankle_delta * ankle_delta_penalty)
+                  w_ankle_delta * ankle_delta_penalty -
+                  w_state_oob * state_oob_penalty)
         
         self.reward_info = {
             "imitation_reward_gail": im_reward, 
@@ -299,6 +347,7 @@ class MyoLegsGAIL(MyoLegsGailTask):
             "muscle_effort": muscle_effort,
             "motor_effort": motor_effort,
             "ankle_delta_penalty": ankle_delta_penalty,
+            "state_oob_penalty": state_oob_penalty,
             "total_reward": reward
         }
         return reward

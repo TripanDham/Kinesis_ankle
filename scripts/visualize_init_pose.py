@@ -31,7 +31,7 @@ def main():
         print("Holding position in viewer for 5 seconds...")
         start_time = time.time()
         while time.time() - start_time < 30.0 and v.is_running():
-            mujoco.mj_step(env.mj_model, env.mj_data)
+            # mujoco.mj_step(env.mj_model, env.mj_data)
             v.sync() # Synchronize the viewer state with mj_data (which is completely static)
             time.sleep(1)
             

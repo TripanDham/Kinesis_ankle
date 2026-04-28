@@ -40,6 +40,10 @@ def main(cfg: DictConfig):
         training=not cfg.run.test,
         checkpoint_epoch=cfg.run.get("checkpoint", 0)
     )
+
+    # Inject normalizer into environment for state-wide OOB penalty
+    if hasattr(agent.env, 'set_normalizer'):
+        agent.env.set_normalizer(agent.policy_net.norm)
     
     # Run
     if cfg.run.test:

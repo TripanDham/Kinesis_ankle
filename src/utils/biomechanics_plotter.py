@@ -301,3 +301,28 @@ def plot_gail_obs_dashboard(all_biomechanics, env):
     output_path = os.path.abspath(os.path.join(os.path.dirname("biomechanics_dashboard.html"), "agent_gail_obs_dashboard.html"))
     fig.write_html(output_path)
     logger.info(f"Agent GAIL Dashboard saved to: {output_path}")
+
+def plot_discriminator_saliency(saliency_data, feature_names, output_path="discriminator_saliency.html"):
+    """
+    Plots the discriminator saliency as a heatmap.
+    
+    Args:
+        saliency_data (np.ndarray): Shape (num_steps, obs_dim)
+        feature_names (list): List of feature names
+        output_path (str): Save path
+    """
+    import plotly.express as px
+    
+    # Transpose so states are on Y axis, time on X axis
+    fig = px.imshow(
+        saliency_data.T,
+        labels=dict(x="Timestep", y="State Feature", color="Gradient Magnitude"),
+        y=feature_names,
+        aspect="auto",
+        title="Discriminator Saliency Heatmap (Gradients w.r.t Input State)",
+        color_continuous_scale='Viridis'
+    )
+    
+    fig.update_layout(height=1200, width=1500, template='plotly_dark')
+    fig.write_html(output_path)
+    logger.info(f"Discriminator saliency dashboard saved to: {output_path}")
