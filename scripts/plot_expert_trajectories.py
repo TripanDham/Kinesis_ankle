@@ -169,8 +169,8 @@ def plot_trajectories(trajectories, output_file):
     print(f"Plot successfully saved to {output_file}")
 
 if __name__ == "__main__":
-    data_dir = "/media/tripan/Data/DDP/amputee_data/training_data_tf02_0p4"
-    output_html = "data/expert_trajectories_plot_tf02_0p4.html"
+    data_dir = "/media/tripan/Data/DDP/amputee_data/training_data_combined"
+    output_html = "data/expert_trajectories_plot_combined.html"
     
     trajectories = generate_trajectories_for_plotting(data_dir)
     plot_trajectories(trajectories, output_html)

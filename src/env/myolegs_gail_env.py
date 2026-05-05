@@ -327,6 +327,29 @@ class MyoLegsGailEnv(BaseEnv):
                 "ankle_K": K_ankle_raw, "ankle_B": B_ankle_raw, "ankle_target": target_ankle
             }
 
+        elif self.pd_control:
+            # 1. Setup Actuator Metadata (Ankle only)
+            ankle_idx = self.motor_idx[0]
+            gear_ankle = self.mj_model.actuator_gear[ankle_idx, 0]
+            j_ankle = self.mj_model.actuator_trnid[ankle_idx, 0]
+            min_a, max_a = self.mj_model.jnt_range[j_ankle]
+            q_ankle = self.mj_data.qpos[self.mj_model.jnt_qposadr[j_ankle]]
+            v_ankle = self.mj_data.qvel[self.mj_model.jnt_dofadr[j_ankle]]
+
+            # 2. Map agent action [-1, 1] to [min_a, max_a]
+            muscle_size = len(self.muscle_idx)
+            raw_target = action[muscle_size] # First action after muscles
+            target_ankle = min_a + (raw_target + 1.0) * (max_a - min_a) / 2.0
+
+            # 3. Apply PD Law with fixed gains from config
+            Kp = self.cfg.env.get("fixed_ankle_stiffness", 200.0)
+            Kd = self.cfg.env.get("fixed_ankle_damping", 5.0)
+            
+            torque_ankle = Kp * (target_ankle - q_ankle) - Kd * v_ankle
+            motor_ctrl = np.array([torque_ankle / gear_ankle])
+            
+            self.last_impedance = {"ankle_K": Kp, "ankle_B": Kd, "ankle_target": target_ankle}
+
         else:
             # Action for motors (Direct torque)
             motor_action = action[self.motor_idx]

@@ -36,6 +36,19 @@ class MyoLegsGAIL(MyoLegsGailTask):
     It returns a 32D joint-based observation (16 angles, 16 velocities) 
     with temporal history (s_t, s_t-1, s_t-2).
     """
+    
+    # Hardcoded Expert Distribution (23D) for Out-of-Bounds Penalty
+    EXPERT_MEAN = np.array([
+        0.134134, -0.117375, -0.083615, -0.179425, -0.155010, 0.189645, 0.039989, -0.142105, -0.308973, -0.104356, 
+        0.598441, 0.002280, 0.002313, -0.041557, 0.009529, -0.012929, 0.022744, 0.001598, 0.003744, -0.011868, 
+        0.005017, -0.015650, 0.007822
+    ])
+
+    EXPERT_STD = np.array([
+        0.245877, 0.030119, 0.081604, 0.272526, 0.097627, 0.210640, 0.058692, 0.063381, 0.363935, 0.111683, 
+        0.120364, 0.132024, 0.105852, 1.508349, 0.380830, 0.558943, 2.275996, 0.693375, 1.217393, 0.542282, 
+        0.708819, 2.892466, 1.253362
+    ])
 
     def __init__(self, cfg):
         self.cfg = cfg
@@ -310,21 +323,16 @@ class MyoLegsGAIL(MyoLegsGailTask):
         # limit_rad = 20 * np.pi / 180.0
         # ankle_limit_penalty = 5.0 if np.abs(q_ankle) > limit_rad else 0.0
 
-        # NEW: State-wide Out-of-Bounds Penalty (based on normalizer)
+        # NEW: State-wide Out-of-Bounds Penalty (hardcoded expert stats)
         state_oob_penalty = 0.0
-        if hasattr(self, 'normalizer') and self.normalizer is not None and self.normalizer.n > 1000:
-            # We use the normalizer's clip value (usually 5.0) as the "out-of-bounds" threshold
-            norm_clip = getattr(self.normalizer, 'clip', 5.0)
-            with torch.no_grad():
-                # Normalize the current task observation (slice normalizer to match gail_obs)
-                gail_obs_size = len(gail_obs)
-                mean = self.normalizer.mean[:gail_obs_size].cpu().numpy()
-                std = self.normalizer.std[:gail_obs_size].cpu().numpy()
-                normalized_obs = (gail_obs - mean) / (std + 1e-8)
-                
-                # Penalize only the magnitude exceeding the clip threshold
-                excess = np.maximum(0, np.abs(normalized_obs) - norm_clip)
-                state_oob_penalty = np.sum(np.square(excess))
+        # We use a fixed 5.0 std threshold for "out-of-bounds"
+        norm_clip = 5.0
+        
+        # Normalize the current task observation (23D)
+        normalized_obs = (gail_obs - self.EXPERT_MEAN) / (self.EXPERT_STD + 1e-8)
+        
+        # Penalize based on the number of features outside the threshold
+        state_oob_penalty = np.sum(np.abs(normalized_obs) > norm_clip)
         
         w_state_oob = self.cfg.env.reward_specs.get("w_state_oob", 0.1)
 

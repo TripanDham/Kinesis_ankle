@@ -94,7 +94,9 @@ class AgentGAIL(AgentHumanoid):
         if epoch < 3000:
             return {"loss_disc": 0.0, "loss_pi": 0.0, "loss_exp": 0.0}
             
-        current_lr = 2e-5
+        # DYNAMIC LR: 5*10^-6(1 - e^-(epoch/2000))
+        current_lr = 5e-6 * (1.0 - np.exp(-epoch / 2000.0))
+        
         for param_group in self.env.optim_disc.param_groups:
             param_group['lr'] = current_lr
 
@@ -152,7 +154,12 @@ class AgentGAIL(AgentHumanoid):
 
             # INSTANCE NOISE: Prevents the discriminator from instantly solving the problem by 
             # memorizing clipped extremes (e.g., [5.0, 5.0]). Also adds continuous gradients.
-            noise_std = self.cfg.learning.get("gail_noise_std", 0.1)
+            noise_cfg = self.cfg.learning.get("gail_noise_std", 0.1)
+            if isinstance(noise_cfg, (list, tuple)):
+                noise_std = torch.tensor(noise_cfg, device=self.device, dtype=self.dtype)
+            else:
+                noise_std = noise_cfg
+                
             states_pi_noisy = states_pi_norm + torch.randn_like(states_pi_norm) * noise_std
             states_exp_noisy = states_exp_norm + torch.randn_like(states_exp_norm) * noise_std
 
