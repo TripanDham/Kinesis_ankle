@@ -86,43 +86,20 @@ class AgentGAIL(AgentHumanoid):
 
     def train_discriminator(self, batch) -> dict:
         """
-        Trains the discriminator using agent rollouts and expert demonstrations.
+        Trains the WGAN-GP critic using agent rollouts and expert demonstrations.
         """
-        epoch = getattr(self, 'epoch', 0)
-        
-        # DELAYED START: Skip GAIL entirely for the first 3000 epochs
-        if epoch < 3000:
-            return {"loss_disc": 0.0, "loss_pi": 0.0, "loss_exp": 0.0}
-            
-        # DYNAMIC LR: 5*10^-6(1 - e^-(epoch/2000))
-        current_lr = 5e-6 * (1.0 - np.exp(-epoch / 2000.0))
-        
+        # Fixed LR for WGAN-GP critic
         for param_group in self.env.optim_disc.param_groups:
-            param_group['lr'] = current_lr
+            param_group['lr'] = 1e-5
 
         to_train(self.env.gail_disc)
-        metrics = {"loss_disc": [], "loss_pi": [], "loss_exp": []}
-        
-        # We need to extract (s, s') or just s from the batch for the discriminator.
-        # However, our environment's GAILDiscrim expects concatenated history observations.
-        # Agent observations in the batch might not be the history-concatenated ones 
-        # depending on how compute_task_obs is implemented.
-        
-        # In our MyoLegsIm.compute_reward, we maintain self.history_buffer.
-        # But the batch contains what was returned by step().
+        metrics = {"loss_disc": [], "wasserstein_dist": [], "gradient_penalty": []}
         
         # Move discriminator to GPU for training
         self.env.gail_disc.to(self.device)
         
         for _ in range(self.epoch_disc):
             # Sample from agent's batch
-            # Assuming batch.states contains the history-concatenated observations
-            # if that's what compute_task_obs returns.
-            # However, compute_task_obs returns a concatenated vector of length obs_size.
-            # The GAIL rewards in compute_reward use self.get_obs() which is often full state.
-            
-            # Let's assume the agent batch contains the same "state" used by the discriminator.
-            # Allow replacement sampling if batch is smaller than discriminator batch size
             replace = (len(batch.states) < self.batch_size_disc)
             indices = np.random.choice(len(batch.states), self.batch_size_disc, replace=replace)
             states_pi_full = torch.from_numpy(batch.states[indices]).to(self.dtype).to(self.device)
@@ -132,8 +109,6 @@ class AgentGAIL(AgentHumanoid):
             states_pi = states_pi_full[:, :gail_obs_size]
             
             # Extract target speeds from agent rollouts
-            # Now that height is in history, target_speed is the FIRST element 
-            # of the proprioceptive slice [Speed, Muscles]
             target_speeds = states_pi_full[:, gail_obs_size]
             
             # Sample expert data matching these speeds
@@ -141,46 +116,41 @@ class AgentGAIL(AgentHumanoid):
             states_exp = states_exp.to(self.dtype).to(self.device)
             
             # NORMALIZATION PARITY:
-            # We map BOTH the expert state and the agent state through PPO's normalizer so the discriminator matches
             self.policy_net.norm.eval()
             with torch.no_grad():
-                # For expert states, we temporarily pad to full dimension to use the normalizer, then extract just the GAIL slice
                 padded_exp = torch.zeros(self.batch_size_disc, self.policy_net.norm.dim, device=self.device, dtype=self.dtype)
                 padded_exp[:, :gail_obs_size] = states_exp
                 states_exp_norm = self.policy_net.norm(padded_exp)[:, :gail_obs_size]
                 
-                # For agent states, just take the first N dimensions of their fully normalized variant
                 states_pi_norm = self.policy_net.norm(states_pi_full)[:, :gail_obs_size]
 
-            # INSTANCE NOISE: Prevents the discriminator from instantly solving the problem by 
-            # memorizing clipped extremes (e.g., [5.0, 5.0]). Also adds continuous gradients.
-            noise_cfg = self.cfg.learning.get("gail_noise_std", 0.1)
-            if isinstance(noise_cfg, (list, tuple)):
-                noise_std = torch.tensor(noise_cfg, device=self.device, dtype=self.dtype)
-            else:
-                noise_std = noise_cfg
-                
+            # INSTANCE NOISE (reduced, scalar 0.05)
+            noise_std = self.cfg.learning.get("gail_noise_std", 0.05)
             states_pi_noisy = states_pi_norm + torch.randn_like(states_pi_norm) * noise_std
             states_exp_noisy = states_exp_norm + torch.randn_like(states_exp_norm) * noise_std
 
-            actions_pi = torch.zeros((self.batch_size_disc, 0), device=self.device)
+            # WGAN-GP Critic Loss
+            critic_agent = self.env.gail_disc(states_pi_noisy).mean()
+            critic_expert = self.env.gail_disc(states_exp_noisy).mean()
             
-            # Discriminator predictions
-            logits_pi = self.env.gail_disc(states_pi_noisy, actions_pi)
-            logits_exp = self.env.gail_disc(states_exp_noisy, actions_pi) # state-only GAIL
+            # Gradient Penalty (on clean normalized states for stable gradients)
+            from gail_airl_ppo.network import GAILDiscrim
+            lambda_gp = self.cfg.learning.get("wgan_lambda_gp", 10.0)
+            gp = GAILDiscrim.compute_gradient_penalty(
+                self.env.gail_disc, states_exp_norm, states_pi_norm, self.device
+            )
             
-            loss_pi = -F.logsigmoid(-logits_pi).mean()
-            loss_exp = -F.logsigmoid(logits_exp).mean()
-            loss_disc = loss_pi + loss_exp
+            loss_disc = critic_agent - critic_expert + lambda_gp * gp
             
             self.env.optim_disc.zero_grad()
             loss_disc.backward()
             self.env.optim_disc.step()
             
-            # Record losses
+            # Record metrics
+            w_dist = (critic_expert - critic_agent).item()
             metrics["loss_disc"].append(loss_disc.item())
-            metrics["loss_pi"].append(loss_pi.item())
-            metrics["loss_exp"].append(loss_exp.item())
+            metrics["wasserstein_dist"].append(w_dist)
+            metrics["gradient_penalty"].append(gp.item())
             
         # Move back to CPU for sampling workers
         self.env.gail_disc.to("cpu")

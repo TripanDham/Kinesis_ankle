@@ -41,6 +41,7 @@ class MyoLegsGailEnv(BaseEnv):
         self.target_speed = 0.0 # Default for observation space sizing
         
         self.impedance_control = cfg.env.get("impedance_control", False)
+        self.pd_control = cfg.env.get("pd_control", False)
         self.active_gains = cfg.env.get("active_gains", True)
 
         self.step_counter = 0
@@ -100,16 +101,70 @@ class MyoLegsGailEnv(BaseEnv):
         self.qpos_lim = np.max(self.mj_model.jnt_qposadr) + self.mj_model.jnt_qposadr[-1] - self.mj_model.jnt_qposadr[-2]
         self.qvel_lim = np.max(self.mj_model.jnt_dofadr) + self.mj_model.jnt_dofadr[-1] - self.mj_model.jnt_dofadr[-2]
         
-        # These are not required but are included for future reference
-        geom_type_id = mujoco.mju_str2Type("geom")
-        self.floor_idx = mujoco.mj_name2id(self.mj_model, geom_type_id, "floor")
+        # Identify Foot Geoms for contact sensing
+        geom_type_id = mujoco.mjtObj.mjOBJ_GEOM
+        self.right_foot_geoms = [
+            mujoco.mj_name2id(self.mj_model, geom_type_id, name) 
+            for name in ["osl_foot_col1", "osl_foot_col2", "osl_foot_col3"]
+            if mujoco.mj_name2id(self.mj_model, geom_type_id, name) != -1
+        ]
+        self.left_foot_geoms = [
+            mujoco.mj_name2id(self.mj_model, geom_type_id, name) 
+            for name in ["calcn_l_geom_1", "toes_l_geom_1"]
+            if mujoco.mj_name2id(self.mj_model, geom_type_id, name) != -1
+        ]
 
         # Identify muscle and motor actuators
         self.actuator_names = get_actuator_names(self.mj_model)
         self.motor_names = ["osl_ankle_torque_actuator"]
         self.motor_idx = [self.actuator_names.index(name) for name in self.motor_names if name in self.actuator_names]
         self.muscle_idx = [i for i in range(self.mj_model.nu) if i not in self.motor_idx]
+
+    def get_foot_contacts(self) -> np.ndarray:
+        """
+        Extracts contact positions and forces for both feet.
+        Returns CoP (3D) and Total Force (3D) per foot in World frame.
+        """
+        contact_obs = np.zeros(12, dtype=self.dtype)
         
+        # Helper to process a set of geoms
+        def process_geoms(geom_ids):
+            total_force = np.zeros(3)
+            weighted_pos = np.zeros(3)
+            total_mag = 0.0
+            
+            for i in range(self.mj_data.ncon):
+                contact = self.mj_data.contact[i]
+                # Check if contact involves one of our foot geoms
+                if contact.geom1 in geom_ids or contact.geom2 in geom_ids:
+                    # Extract 3D force in contact frame
+                    force_6d = np.zeros(6)
+                    mujoco.mj_contactForce(self.mj_model, self.mj_data, i, force_6d)
+                    
+                    # Transform force to world frame
+                    contact_frame = contact.frame.reshape(3, 3)
+                    world_force = contact_frame.T @ force_6d[:3]
+                    
+                    # Accumulate
+                    mag = np.linalg.norm(world_force)
+                    if mag > 1e-3:
+                        total_force += world_force
+                        weighted_pos += contact.pos * mag
+                        total_mag += mag
+            
+            if total_mag > 0:
+                cop = weighted_pos / total_mag
+            else:
+                cop = np.zeros(3) # No contact
+            
+            return cop, total_force
+
+        r_cop, r_force = process_geoms(self.right_foot_geoms)
+        l_cop, l_force = process_geoms(self.left_foot_geoms)
+        
+        # Concatenate: [R_CoP, R_Force, L_CoP, L_Force]
+        return np.concatenate([r_cop, r_force, l_cop, l_force])
+
     def get_obs_size(self) -> int:
         """
         Returns the size of the observations. In the environment class, this defaults to the size of the proprioceptive observations.
@@ -133,41 +188,20 @@ class MyoLegsGailEnv(BaseEnv):
     def compute_proprioception(self) -> np.ndarray:
         """
         Computes proprioceptive observations for the current simulation state.
-
-        Updates the humanoid's body and actuator states, and generates observations 
-        based on the configured inputs.
-
-        Returns:
-            np.ndarray: Flattened array of proprioceptive observations.
-
-        Notes:
-            - The observations are also stored in the `self.proprioception` attribute.
         """
-        mujoco.mj_kinematics(self.mj_model, self.mj_data)  # update xpos to the latest simulation values
+        mujoco.mj_kinematics(self.mj_model, self.mj_data)
         
         body_pos = self.get_body_xpos()[None,]
         body_rot = self.get_body_xquat()[None,]
-        
         body_vel = self.get_body_linear_vel()[None,]
         body_ang_vel = self.get_body_angular_vel()[None,]
 
-        obs_dict =  compute_self_observations(body_pos, body_rot, body_vel, body_ang_vel)
-        
-        # Get root orientation from body xquat (world frame, works for both freejoint and hinge root)
-        # body_rot[0, 0] is the root body's quaternion in [w, x, y, z] format (MuJoCo convention)
+        # Get root info for frame transformation
+        root_pos = body_pos[0, 0]
         root_quat_wxyz = body_rot[0, 0]
-        root_rot = sRot.from_quat(root_quat_wxyz[[1, 2, 3, 0]])  # Convert to [x, y, z, w] for scipy
-        root_rot_euler = root_rot.as_euler("xyz")
-
+        heading_rot_inv = npt_utils.calc_heading_quat_inv(root_quat_wxyz[None,])[0]
+        
         myolegs_obs = OrderedDict()
-        
-        inputs = self.cfg.run.proprioceptive_inputs
-
-        # STRICT OBSERVATION SET:
-        # [GAIL History (180D) is provided by MyoLegsIL wrapper]
-        
-        # STRICT OBSERVATION SET:
-        # [GAIL History (180D) is provided by MyoLegsIL wrapper]
         
         # 1. Target Speed (1D)
         myolegs_obs["target_speed"] = np.array([self.target_speed], dtype=self.dtype)
@@ -175,8 +209,27 @@ class MyoLegsGailEnv(BaseEnv):
         # 2. Muscle Activations (22D)
         myolegs_obs["muscle_act"] = np.nan_to_num(self.mj_data.act.copy()) if self.mj_data.act is not None else np.zeros(self.mj_model.na)
         
-        self.proprioception = myolegs_obs
+        # 3. Contact Features (12D)
+        raw_contacts = self.get_foot_contacts()
+        
+        # Transform CoPs and Forces to Root Frame
+        # Contact obs is [R_CoP(3), R_Force(3), L_CoP(3), L_Force(3)]
+        r_cop = raw_contacts[0:3]
+        r_force = raw_contacts[3:6]
+        l_cop = raw_contacts[6:9]
+        l_force = raw_contacts[9:12]
+        
+        # Local CoP = Rotate_Inv(Global_CoP - Root_Pos)
+        local_r_cop = npt_utils.quat_rotate(heading_rot_inv[None,], (r_cop - root_pos)[None,])[0] if np.any(r_cop) else np.zeros(3)
+        local_l_cop = npt_utils.quat_rotate(heading_rot_inv[None,], (l_cop - root_pos)[None,])[0] if np.any(l_cop) else np.zeros(3)
+        
+        # Local Force = Rotate_Inv(Global_Force)
+        local_r_force = npt_utils.quat_rotate(heading_rot_inv[None,], r_force[None,])[0]
+        local_l_force = npt_utils.quat_rotate(heading_rot_inv[None,], l_force[None,])[0]
+        
+        myolegs_obs["contacts"] = np.concatenate([local_r_cop, local_r_force, local_l_cop, local_l_force])
 
+        self.proprioception = myolegs_obs
         return np.concatenate([v.ravel() for v in myolegs_obs.values()], axis=0, dtype=self.dtype)
     
     def get_body_xpos(self):

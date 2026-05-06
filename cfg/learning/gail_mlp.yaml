@@ -10,11 +10,13 @@ actor_type: "gauss"
 # PPO steps per epoch
 opt_num_epochs: 10
 
-# GAIL Discriminator parameters
+# GAIL Discriminator parameters (WGAN-GP)
 batch_size_disc: 512
-epoch_disc: 2
+epoch_disc: 5
 gail_lr: 2.e-5
-gail_noise_std: 0.1
+gail_noise_std: 0.05
+wgan_lambda_gp: 10.0
+wgan_reward_ema: 0.9999
 
 # Trajectory samples per epoch
 min_batch_size: 8192

@@ -79,6 +79,12 @@ class MyoLegsGAIL(MyoLegsGailTask):
         
         self.optim_disc = Adam(self.gail_disc.parameters(), lr=cfg.learning.get("gail_lr", 1e-4))
         
+        # WGAN-GP reward normalization (EMA)
+        self._reward_ema_alpha = cfg.learning.get("wgan_reward_ema", 0.9999)
+        self._reward_mean = 0.0
+        self._reward_var = 1.0
+        self._reward_count = 0
+        
         # Expert ghost visualization
         self.expert_ghost = ExpertGhost(self.mj_model, lateral_offset=-1.5)
         self.expert_motion_time = 0.0
@@ -289,19 +295,29 @@ class MyoLegsGAIL(MyoLegsGailTask):
         self.normalizer = normalizer
 
     def compute_reward(self, action: Optional[np.ndarray] = None) -> float:
-        """GAIL Reward using the Discriminator + Velocity Matching."""
+        """WGAN-GP Reward using the Critic + Velocity Matching."""
         gail_obs = self.compute_task_obs()
         device = next(self.gail_disc.parameters()).device
         obs_tensor = torch.as_tensor(gail_obs, dtype=torch.float32, device=device).unsqueeze(0)
         a_tensor = torch.zeros((1, 0), device=device)
         
         with torch.no_grad():
-            # calculate_reward returns -log(1-D) which is in [0, inf)
-            im_reward = self.gail_disc.calculate_reward(obs_tensor, a_tensor).item()
+            # WGAN reward: raw critic output (higher = more expert-like)
+            im_reward_raw = self.gail_disc.calculate_reward_wgan(obs_tensor, a_tensor).item()
             
-            # STABILIZATION: Clamp the imitation reward to prevent explosion
-            # A reward of 2.0 corresponds to D=0.86, which is a strong signal but not destabilizing.
-            im_reward = np.clip(im_reward, 0.0, 2.0)
+            # EMA normalization to [0, 1]
+            self._reward_count += 1
+            alpha = self._reward_ema_alpha
+            if self._reward_count == 1:
+                self._reward_mean = im_reward_raw
+                self._reward_var = 1.0
+            else:
+                self._reward_mean = alpha * self._reward_mean + (1 - alpha) * im_reward_raw
+                self._reward_var = alpha * self._reward_var + (1 - alpha) * (im_reward_raw - self._reward_mean) ** 2
+            
+            reward_std = np.sqrt(self._reward_var) + 1e-8
+            im_reward = np.clip((im_reward_raw - self._reward_mean) / reward_std, -1.0, 1.0)
+            im_reward = (im_reward + 1.0) / 2.0  # Map [-1, 1] -> [0, 1]
             
         dist_reward = self.compute_distance_reward()
         upright_reward = self.compute_upright_reward()
@@ -336,11 +352,7 @@ class MyoLegsGAIL(MyoLegsGailTask):
         
         w_state_oob = self.cfg.env.reward_specs.get("w_state_oob", 0.1)
 
-        # DELAYED GAIL START: Ignore imitation reward before 3000 epochs
-        current_epoch = getattr(self, 'current_epoch', 0)
-        im_weight = 1.0 if current_epoch >= 3000 else 0.0
-
-        reward = (im_weight * im_reward + 
+        reward = (im_reward + 
                   0.2 * dist_reward + 
                   0.3 * upright_reward - 
                   w_muscle * muscle_effort - 
