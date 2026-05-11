@@ -1,12 +1,14 @@
 # Paths
-motion_file: "/media/tripan/Data/DDP/amputee_data/training_data"
+motion_file: "/media/tripan/Data/DDP/amputee_data/training_data_combined"
 expert_buffer_path: "/media/tripan/Data/DDP/Kinesis_ankle/data/expert_trajectories.pth"
-initial_pose_file: "/media/tripan/Data/DDP/amputee_data/training_data/processed_motions.joblib"
+initial_pose_file: "/media/tripan/Data/DDP/amputee_data/training_data_combined/processed_motions.joblib"
+rsi_poses_path: "/media/tripan/Data/DDP/Kinesis_ankle/data/rsi_poses.npz"
+rsi_init_vel: true
 xml_path: "/media/tripan/Data/DDP/Kinesis_ankle/data/xml/myoLeg26_OSL_A.xml"
 
-# motion_file: "/home/stadmn/coding/tripan/data/training_data"
+# motion_file: "/home/stadmn/coding/tripan/data/training_data_combined"
 # expert_buffer_path: "/home/stadmn/coding/tripan/Kinesis_ankle/data/expert_trajectories.pth"
-# initial_pose_file: "/home/stadmn/coding/tripan/data/training_data/processed_motions.joblib"
+# initial_pose_file: "/home/stadmn/coding/tripan/data/training_data_combined/processed_motions.joblib"
 # xml_path: "/home/stadmn/coding/tripan/Kinesis_ankle/data/xml/myoLeg26_OSL_A.xml"
 
 # Parameters

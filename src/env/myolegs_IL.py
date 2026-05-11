@@ -65,6 +65,7 @@ class MyoLegsGAIL(MyoLegsGailTask):
         
         self._setup_obs_mapping()
         self.setup_motionlib()
+        self._load_rsi_poses()
         
         # Discriminator receives same observations as actor (33D per frame)
         # NOTE: Must stay on CPU — compute_reward() is called in forked sampling workers
@@ -123,6 +124,25 @@ class MyoLegsGAIL(MyoLegsGailTask):
         self.motion_lib.load_motions(self.cfg.run)
         logger.info(f"Motion library initialized with {len(self.motion_lib.curr_motion_keys)} motions.")
 
+    def _load_rsi_poses(self):
+        """Loads pre-computed RSI poses from .npz file if configured."""
+        rsi_path = self.cfg.run.get("rsi_poses_path", None)
+        self.rsi_init_vel = self.cfg.run.get("rsi_init_vel", True)
+        
+        if rsi_path and os.path.exists(rsi_path):
+            data = np.load(rsi_path, allow_pickle=True)
+            self.rsi_qpos = data['rsi_qpos']  # (N, nq)
+            self.rsi_qvel = data['rsi_qvel']  # (N, nv)
+            self.rsi_enabled = True
+            logger.info(f"RSI loaded: {self.rsi_qpos.shape[0]} poses from {rsi_path} "
+                        f"(vel_init={'ON' if self.rsi_init_vel else 'OFF'})")
+        else:
+            self.rsi_enabled = False
+            if rsi_path:
+                logger.warning(f"RSI file not found: {rsi_path}. Falling back to keyframe init.")
+            else:
+                logger.info("RSI disabled (no rsi_poses_path configured).")
+
     def get_disc_obs(self) -> np.ndarray:
         """
         Computes the 24D raw observation (10 angles + 13 velocities + 1 root height)
@@ -171,54 +191,34 @@ class MyoLegsGAIL(MyoLegsGailTask):
 
     def init_myolegs(self):
         """
-        Initializes the MyoLegs environment by loading the 'walk_right' keyframe,
-        then overwrites the 10 tracked joint angles AND the 3 pelvis angles with 
-        hardcoded expert values from tf01_0p6_01_rotated_ik.mot (Frame 0).
-        All velocities are zeroed.
+        Initializes the MyoLegs environment using Reference State Initialization (RSI).
+        
+        If RSI is enabled, randomly samples a pre-computed (qpos, qvel) pair from
+        the RSI pose pool. These poses were generated from expert .mot files with
+        subject-specific height scaling, ankle offsets, and pelvis tilt corrections.
+        
+        Falls back to the 'stand' keyframe if RSI is not available.
         """
-        try:
-            # 1. Load 'walk_right' keyframe for full qpos/qvel state baseline
-            stand_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_KEY, 'walk_right')
+        if self.rsi_enabled:
+            # Sample a random pose from the RSI pool
+            idx = np.random.randint(0, len(self.rsi_qpos))
+            
+            self.mj_data.qpos[:] = self.rsi_qpos[idx]
+            
+            if self.rsi_init_vel:
+                self.mj_data.qvel[:] = self.rsi_qvel[idx]
+            else:
+                self.mj_data.qvel[:] = 0.0
+        else:
+            # Fallback: use 'stand' keyframe
+            stand_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_KEY, 'stand')
             if stand_id != -1:
                 self.mj_data.qpos[:] = self.mj_model.key_qpos[stand_id]
-                logger.info(f"Loaded 'walk_right' keyframe (id: {stand_id}) as baseline.")
+                self.mj_data.qvel[:] = 0.0
             else:
                 self.mj_data.qpos[:] = 0
-                self.mj_data.qpos[1] = 0.88 # Fallback height
-                logger.warning("Could not find 'walk_right' keyframe. Using zeroed qpos baseline.")
-
-            # 2. Set all velocities to zero
-            self.mj_data.qvel[:] = 0
-            self.mj_data.qpos[1] = 0.89
-            # 3. Overwrite only the 10 Tracked Joint Angles (Frame 0 of 0p4_01_rotated_ik.mot)
-            expert_angles = [0.4650, -0.1353, 0.0303, 0.0529, 0.0815, 0.0175, 0.0639, -0.1207, 0.0127, 0.1504]
-            # File: /media/tripan/Data/DDP/amputee_data/training_data_tf02_0p4/0p4_01_rotated_ik.mot
-            # expert_angles = [
-            #     0.4650, -0.1770, -0.1489, -0.8497, -0.0427, # Right Leg (Inverted knee/ankle)
-            #     0.5475, -0.0114, -0.1414, -0.2828, -0.1639  # Left Leg (Inverted knee/ankle)
-            # ]
-            
-            for i, idx in enumerate(self.obs_qpos_idx):
-                self.mj_data.qpos[idx] = expert_angles[i]
-            
-            # 4. Overwrite Pelvis Angles (Frame 0 of 0p4_01_rotated_ik.mot)
-            # Degrees: tilt: -20.5815, list: 2.0785, rotation: -7.6137
-            # tf01_0p6_01
-            self.mj_data.qpos[3] = -0.1177
-            self.mj_data.qpos[4] = 0.0512 
-            self.mj_data.qpos[5] = -0.0129 
-            # tf02_0p4_01
-            # self.mj_data.qpos[3] = -0.3592 
-            # self.mj_data.qpos[4] = 0.0363  
-            # self.mj_data.qpos[5] = -0.1329 
-
-            logger.info("Initialized with walk_right baseline, expert (tf01_0p6_01) joints + pelvis angles, and zeroed velocities.")
-
-        except Exception as e:
-            logger.warning(f"Error during init_myolegs: {e}")
-            self.mj_data.qpos[:] = 0
-            self.mj_data.qvel[:] = 0
-            self.mj_data.qpos[1] = 0.88
+                self.mj_data.qvel[:] = 0
+                self.mj_data.qpos[1] = 0.91
             
         mujoco.mj_kinematics(self.mj_model, self.mj_data)
 
@@ -355,10 +355,10 @@ class MyoLegsGAIL(MyoLegsGailTask):
         reward = (im_reward + 
                   0.2 * dist_reward + 
                   0.3 * upright_reward - 
-                  w_muscle * muscle_effort - 
-                  w_motor * motor_effort -
-                  w_ankle_delta * ankle_delta_penalty -
-                  w_state_oob * state_oob_penalty)
+                  0.01 * muscle_effort - 
+                  0.05 * motor_effort -
+                  0 * ankle_delta_penalty -
+                  0.01 * state_oob_penalty)
         
         self.reward_info = {
             "imitation_reward_gail": im_reward, 

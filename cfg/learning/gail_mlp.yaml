@@ -11,8 +11,8 @@ actor_type: "gauss"
 opt_num_epochs: 10
 
 # GAIL Discriminator parameters (WGAN-GP)
-batch_size_disc: 512
-epoch_disc: 5
+batch_size_disc: 4096
+epoch_disc: 10
 gail_lr: 2.e-5
 gail_noise_std: 0.05
 wgan_lambda_gp: 10.0
@@ -61,7 +61,7 @@ value_weightdecay: 0.0
 value_lr: 3.e-4
 
 mlp:
-  units: [512, 256, 128]
+  units: [1024, 512, 256]
   activation: silu
 
   initializer:

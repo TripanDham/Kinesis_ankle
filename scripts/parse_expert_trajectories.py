@@ -149,7 +149,7 @@ def generate_trajectories(data_dir, output_path, target_freq=30.0):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", type=str, default="/media/tripan/Data/DDP/amputee_data/training_data")
+    parser.add_argument("--data_dir", type=str, default="/media/tripan/Data/DDP/amputee_data/training_data_combined")
     parser.add_argument("--output_path", type=str, default="data/expert_trajectories.pth")
     parser.add_argument("--target_freq", type=float, default=30.0)
     args = parser.parse_args()
