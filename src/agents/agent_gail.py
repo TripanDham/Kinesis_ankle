@@ -245,3 +245,35 @@ class AgentGAIL(AgentHumanoid):
         
         # Run standard evaluation for biomechanics plots
         return super().eval_policy(runs=runs, dump=dump)
+
+    def get_full_state_weights(self) -> dict:
+        """Extends checkpoint saving with GAIL networks and stats."""
+        state = super().get_full_state_weights()
+        state.update({
+            "discriminator": self.env.gail_disc.state_dict(),
+            "optimizer_discriminator": self.env.optim_disc.state_dict(),
+            "reward_mean": self.env._reward_mean,
+            "reward_var": self.env._reward_var,
+            "reward_count": self.env._reward_count
+        })
+        return state
+
+    def set_full_state_weights(self, state):
+        """Extends checkpoint loading with GAIL networks and stats."""
+        super().set_full_state_weights(state)
+        
+        if "discriminator" in state:
+            self.env.gail_disc.load_state_dict(state["discriminator"])
+            logger.info("Loaded GAIL discriminator weights from checkpoint.")
+        
+        if "optimizer_discriminator" in state:
+            self.env.optim_disc.load_state_dict(state["optimizer_discriminator"])
+            logger.info("Loaded GAIL discriminator optimizer state.")
+            
+        # Restore WGAN-GP reward normalization stats
+        self.env._reward_mean = state.get("reward_mean", self.env._reward_mean)
+        self.env._reward_var = state.get("reward_var", self.env._reward_var)
+        self.env._reward_count = state.get("reward_count", self.env._reward_count)
+        
+        if "reward_mean" in state:
+            logger.info(f"Restored GAIL reward EMA stats (mean={self.env._reward_mean:.4f}, var={self.env._reward_var:.4f})")

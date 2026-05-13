@@ -571,3 +571,81 @@ class ProstWalkCore:
             replace=True,
         )
         return motion_ids
+
+    def get_reference_state(
+        self,
+        motion_key: str,
+        t_start: float,
+        elapsed: float,
+        joint_qpos_idx: list,
+        joint_qvel_idx: list,
+        subject_settings: dict = None,
+    ) -> dict:
+        """
+        Returns interpolated (q_hat, qdot_hat) for tracked joints at time
+        t_start + elapsed within the named motion.
+
+        Reads full qpos/qvel from self.motion_data[motion_key], which is
+        already in memory from processed_motions.joblib — no file I/O.
+
+        The reference is CLAMPED at the last frame (no wrap-around).
+
+        The same subject-specific corrections applied during RSI generation
+        are re-applied here so that q_hat is consistent with how the agent
+        was initialised:
+            - pelvis_ty *= height_scale
+            - pelvis_list += list_offset_rad
+            - osl_ankle_angle_r += ankle_offset_rad
+            - pelvis_ty velocity *= height_scale
+
+        Args:
+            motion_key:       Key in self.motion_data (e.g. 'tf01_0p6_01_rotated_ik')
+            t_start:          Start time in seconds (= frame_idx / fps at reset)
+            elapsed:          Seconds elapsed in the current episode
+            joint_qpos_idx:   MuJoCo qpos indices for tracked joints (no pelvis)
+            joint_qvel_idx:   MuJoCo qvel indices for tracked joints (no pelvis lin vel)
+            subject_settings: Dict produced by MyoLegsGAIL._build_subject_settings().
+                              Keys: height_scale, list_offset_rad, ankle_offset_rad,
+                                    ty_qpos_adr, list_qpos_adr, ankle_r_qpos_adr,
+                                    ty_dof_adr
+
+        Returns:
+            dict with:
+                'q_hat'    — np.ndarray, shape (len(joint_qpos_idx),)
+                'qdot_hat' — np.ndarray, shape (len(joint_qvel_idx),)
+        """
+        if motion_key not in self.motion_data:
+            raise KeyError(
+                f"motion_key '{motion_key}' not found in motion_data. "
+                f"Available keys: {list(self.motion_data.keys())[:5]}..."
+            )
+
+        data   = self.motion_data[motion_key]
+        qpos_m = data['qpos']          # (T, nq)  full trajectory
+        qvel_m = data['qvel']          # (T, nv)
+        fps    = float(data['fps'])
+        T      = qpos_m.shape[0]
+
+        # Time query — clamp at last frame
+        t_query = t_start + elapsed
+        frame_f = min(t_query * fps, float(T - 1))
+        f0      = int(frame_f)
+        f1      = min(f0 + 1, T - 1)
+        alpha   = frame_f - f0          # linear blend weight [0, 1)
+
+        # Interpolate full qpos/qvel
+        qpos_ref = ((1.0 - alpha) * qpos_m[f0] + alpha * qpos_m[f1]).copy()
+        qvel_ref = ((1.0 - alpha) * qvel_m[f0] + alpha * qvel_m[f1]).copy()
+
+        # Apply subject-specific corrections (identical to generate_rsi_poses.py)
+        if subject_settings is not None:
+            hs  = subject_settings['height_scale']
+            qpos_ref[subject_settings['ty_qpos_adr']]    *= hs
+            qpos_ref[subject_settings['list_qpos_adr']]  += subject_settings['list_offset_rad']
+            qpos_ref[subject_settings['ankle_r_qpos_adr']] += subject_settings['ankle_offset_rad']
+            qvel_ref[subject_settings['ty_dof_adr']]     *= hs
+
+        return {
+            'q_hat':    qpos_ref[joint_qpos_idx],
+            'qdot_hat': qvel_ref[joint_qvel_idx],
+        }

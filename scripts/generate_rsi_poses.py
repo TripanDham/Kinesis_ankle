@@ -97,7 +97,11 @@ def main():
     # ── 4. Process each file ──
     all_qpos = []
     all_qvel = []
-    file_sources = []  # Track which file each pose came from
+    file_sources = []       # basename string
+    all_frame_idx = []      # source frame index within the .mot file
+    all_fps = []            # fps of the source .mot file
+    all_motion_key = []     # stem name — key in processed_motions.joblib
+    all_subject_id = []     # 'tf01' / 'tf11' etc.
 
     for mot_file in mot_files:
         basename = os.path.basename(mot_file)
@@ -123,6 +127,9 @@ def main():
         list_offset_rad = np.deg2rad(settings['pelvis_list_offset_deg'])
         ankle_r_offset_rad = np.deg2rad(settings['ankle_r_offset_deg'])
         height_scale = settings['height_scale']
+
+        # Motion key = stem of the .mot file (matches processed_motions.joblib key)
+        motion_key = os.path.splitext(basename)[0]
 
         for fi in sample_indices:
             # Start from stand keyframe (fills unmapped DOFs)
@@ -151,6 +158,10 @@ def main():
             all_qpos.append(qpos)
             all_qvel.append(qvel)
             file_sources.append(basename)
+            all_frame_idx.append(int(fi))
+            all_fps.append(float(parsed['fps']))
+            all_motion_key.append(motion_key)
+            all_subject_id.append(subject)
 
     # ── 5. Stack and save ──
     rsi_qpos = np.stack(all_qpos, axis=0)  # (2700, nq)
@@ -172,8 +183,12 @@ def main():
         args.output_path,
         rsi_qpos=rsi_qpos,
         rsi_qvel=rsi_qvel,
-        subject_settings={str(k): str(v) for k, v in SUBJECT_SETTINGS.items()},
         source_files=np.array(file_sources),
+        # Tracking metadata — used by get_reference_state() at runtime
+        rsi_frame_idx=np.array(all_frame_idx, dtype=np.int32),
+        rsi_fps=np.array(all_fps, dtype=np.float32),
+        rsi_motion_key=np.array(all_motion_key),
+        rsi_subject_id=np.array(all_subject_id),
     )
     print(f"\nSaved to {args.output_path}")
     print(f"File size: {os.path.getsize(args.output_path) / 1024:.1f} KB")

@@ -125,23 +125,66 @@ class MyoLegsGAIL(MyoLegsGailTask):
         logger.info(f"Motion library initialized with {len(self.motion_lib.curr_motion_keys)} motions.")
 
     def _load_rsi_poses(self):
-        """Loads pre-computed RSI poses from .npz file if configured."""
+        """Loads pre-computed RSI poses and tracking metadata from .npz file."""
         rsi_path = self.cfg.run.get("rsi_poses_path", None)
         self.rsi_init_vel = self.cfg.run.get("rsi_init_vel", True)
-        
+
         if rsi_path and os.path.exists(rsi_path):
             data = np.load(rsi_path, allow_pickle=True)
-            self.rsi_qpos = data['rsi_qpos']  # (N, nq)
-            self.rsi_qvel = data['rsi_qvel']  # (N, nv)
+            self.rsi_qpos = data['rsi_qpos']   # (N, nq)
+            self.rsi_qvel = data['rsi_qvel']   # (N, nv)
+            # Tracking metadata (added by updated generate_rsi_poses.py)
+            self.rsi_frame_idx  = data['rsi_frame_idx']   # (N,) int
+            self.rsi_fps        = data['rsi_fps']          # (N,) float
+            self.rsi_motion_key = data['rsi_motion_key']  # (N,) str
+            self.rsi_subject_id = data['rsi_subject_id']  # (N,) str
             self.rsi_enabled = True
             logger.info(f"RSI loaded: {self.rsi_qpos.shape[0]} poses from {rsi_path} "
                         f"(vel_init={'ON' if self.rsi_init_vel else 'OFF'})")
         else:
             self.rsi_enabled = False
+            self.rsi_frame_idx  = None
+            self.rsi_fps        = None
+            self.rsi_motion_key = None
+            self.rsi_subject_id = None
             if rsi_path:
                 logger.warning(f"RSI file not found: {rsi_path}. Falling back to keyframe init.")
             else:
                 logger.info("RSI disabled (no rsi_poses_path configured).")
+
+        # Build subject correction lookup (MuJoCo address lookups done once here).
+        # Replicates the exact corrections applied in generate_rsi_poses.py.
+        from scripts.generate_rsi_poses import SUBJECT_SETTINGS
+        self._subject_correction_map = {}
+        for subj, settings in SUBJECT_SETTINGS.items():
+            self._subject_correction_map[subj] = {
+                'height_scale':     settings['height_scale'],
+                'list_offset_rad':  np.deg2rad(settings['pelvis_list_offset_deg']),
+                'ankle_offset_rad': np.deg2rad(settings['ankle_r_offset_deg']),
+                'ty_qpos_adr':      self.mj_model.joint('pelvis_ty').qposadr[0],
+                'list_qpos_adr':    self.mj_model.joint('pelvis_list').qposadr[0],
+                'ankle_r_qpos_adr': self.mj_model.joint('osl_ankle_angle_r').qposadr[0],
+                'ty_dof_adr':       self.mj_model.joint('pelvis_ty').dofadr[0],
+            }
+
+        # Tracking config — inherited from yaml
+        self._sim_dt            = self.mj_model.opt.timestep * getattr(self, 'control_freq_inv', 1)
+        self._tracking_interval = self.cfg.env.get('tracking_interval', 0.1)
+        self.w_track_pos        = self.cfg.env.get('w_track_pos', 2.0)
+        self.w_track_vel        = self.cfg.env.get('w_track_vel', 0.1)
+        self.w_track            = self.cfg.env.get('tracking_reward_weight', 1.0)
+
+        # Tracking runtime state (reset each episode in init_myolegs)
+        self._tracking_motion_key    = None
+        self._tracking_t_start       = 0.0
+        self._tracking_subject       = None
+        self._tracking_elapsed       = 0.0
+        self._tracking_last_ref_time = -np.inf
+        self._q_hat                  = None
+        self._qdot_hat               = None
+        # joint-only velocity indices — obs_qvel_idx[3:] drops the 3 pelvis linear vels
+        self._track_qvel_idx         = self.obs_qvel_idx[3:]
+
 
     def get_disc_obs(self) -> np.ndarray:
         """
@@ -209,6 +252,21 @@ class MyoLegsGAIL(MyoLegsGailTask):
                 self.mj_data.qvel[:] = self.rsi_qvel[idx]
             else:
                 self.mj_data.qvel[:] = 0.0
+
+            # --- Sync tracking state with this RSI pose ---
+            if self.rsi_motion_key is not None:
+                self._tracking_motion_key    = str(self.rsi_motion_key[idx])
+                self._tracking_t_start       = float(self.rsi_frame_idx[idx]) / float(self.rsi_fps[idx])
+                subj_id                      = str(self.rsi_subject_id[idx])
+                self._tracking_subject       = self._subject_correction_map.get(subj_id)
+            else:
+                self._tracking_motion_key = None
+
+            # Reset tracking clock
+            self._tracking_elapsed       = 0.0
+            self._tracking_last_ref_time = -np.inf
+            self._q_hat                  = None
+            self._qdot_hat               = None
         else:
             # Fallback: use 'stand' keyframe
             stand_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_KEY, 'stand')
@@ -318,8 +376,27 @@ class MyoLegsGAIL(MyoLegsGailTask):
             reward_std = np.sqrt(self._reward_var) + 1e-8
             im_reward = np.clip((im_reward_raw - self._reward_mean) / reward_std, -1.0, 1.0)
             im_reward = (im_reward + 1.0) / 2.0  # Map [-1, 1] -> [0, 1]
+
+        # Advance tracking clock and fetch reference if interval has elapsed
+        self._tracking_elapsed += self._sim_dt
+        if (self._tracking_motion_key is not None and
+                self._tracking_elapsed - self._tracking_last_ref_time >= self._tracking_interval):
+            try:
+                ref = self.motion_lib.get_reference_state(
+                    motion_key       = self._tracking_motion_key,
+                    t_start          = self._tracking_t_start,
+                    elapsed          = self._tracking_elapsed,
+                    joint_qpos_idx   = self.obs_qpos_idx,
+                    joint_qvel_idx   = self._track_qvel_idx,
+                    subject_settings = self._tracking_subject,
+                )
+                self._q_hat    = ref['q_hat']
+                self._qdot_hat = ref['qdot_hat']
+            except KeyError:
+                pass  # motion_key not yet loaded — silently skip
+            self._tracking_last_ref_time = self._tracking_elapsed
             
-        dist_reward = self.compute_distance_reward()
+        vel_reward = self.compute_velocity_reward()
         upright_reward = self.compute_upright_reward()
         
         # Split Energy Reward
@@ -352,9 +429,12 @@ class MyoLegsGAIL(MyoLegsGailTask):
         
         w_state_oob = self.cfg.env.reward_specs.get("w_state_oob", 0.1)
 
+        tracking_reward = self.compute_tracking_reward()
+
         reward = (im_reward + 
-                  0.2 * dist_reward + 
-                  0.3 * upright_reward - 
+                  0.2 * vel_reward + 
+                  0.3 * upright_reward +
+                  self.w_track * tracking_reward -
                   0.01 * muscle_effort - 
                   0.05 * motor_effort -
                   0 * ankle_delta_penalty -
@@ -362,8 +442,9 @@ class MyoLegsGAIL(MyoLegsGailTask):
         
         self.reward_info = {
             "imitation_reward_gail": im_reward, 
-            "distance_reward": dist_reward,
+            "velocity_reward": vel_reward,
             "upright_reward": upright_reward,
+            "tracking_reward": tracking_reward,
             "muscle_effort": muscle_effort,
             "motor_effort": motor_effort,
             "ankle_delta_penalty": ankle_delta_penalty,
@@ -372,13 +453,16 @@ class MyoLegsGAIL(MyoLegsGailTask):
         }
         return reward
 
-    def compute_distance_reward(self) -> float:
-        """Rewards the absolute forward distance moved by the pelvis."""
-        if getattr(self, 'cur_t', 0) <= 1 or not hasattr(self, 'start_pelvis_x'):
-            self.start_pelvis_x = self.mj_data.qpos[0]
-            
-        distance = self.mj_data.qpos[0] - self.start_pelvis_x
-        return float(distance)
+    def compute_velocity_reward(self) -> float:
+        """Rewards forward pelvis velocity matching the treadmill target (0.6 m/s).
+
+        R_vel = exp( -2.0 * (v_x_pelvis - 0.6)^2 )
+
+        pelvis_tx is dofadr[0] in the hinge-root model.
+        """
+        pelvis_tx_dof = self.mj_model.joint('pelvis_tx').dofadr[0]
+        vx = float(self.mj_data.qvel[pelvis_tx_dof])
+        return float(np.exp(-2.0 * (vx - 0.6) ** 2))
 
     def compute_muscle_effort(self, action: np.ndarray) -> float:
         """Computes effort penalty for biological muscles."""
@@ -408,6 +492,23 @@ class MyoLegsGAIL(MyoLegsGailTask):
         fall_sideways = np.angle(upright_trigs[2] + 1j * upright_trigs[3])
         upright_reward = np.exp(-3 * (fall_forward ** 2 + fall_sideways ** 2))
         return upright_reward
+
+    def compute_tracking_reward(self) -> float:
+        """
+        Computes R_track = exp(-w1*||q - q_hat||^2 - w2*||qdot - qdot_hat||^2)
+        for joints only (no pelvis translation/rotation).
+        Returns 0.0 if the reference has not been fetched yet.
+        """
+        if self._q_hat is None or self._qdot_hat is None:
+            return 0.0
+        q    = self.mj_data.qpos[self.obs_qpos_idx]    # joint angles (10D)
+        qdot = self.mj_data.qvel[self._track_qvel_idx] # joint vels (10D, no pelvis)
+        dq   = q    - self._q_hat
+        dqd  = qdot - self._qdot_hat
+        return float(np.exp(
+            -self.w_track_pos * float(dq  @ dq) 
+            -self.w_track_vel * float(dqd @ dqd)
+        ))
 
     def compute_reset(self) -> Tuple[bool, bool]:
         """Basic stability and time-based reset."""

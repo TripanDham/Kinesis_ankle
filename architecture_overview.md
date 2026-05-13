@@ -10,7 +10,9 @@ The system uses **Generative Adversarial Imitation Learning (GAIL)** combined wi
 ### A. Environment: `MyoLegsGAIL`
 *   **Model**: `myoLeg26_OSL_A.xml` (MyoLegs 2.0 with OSL Ankle).
 *   **Physics Engine**: MuJoCo.
-*   Initialisation Pose: The agent is initialised in a ready to walk pose which is taken from the first frame of one of the expert data trajectories. THe velocities of the joints and centre of mass are set to 0. 
+*   **Reference State Initialization (RSI)**: Instead of a fixed pose, the agent is initialized using a pool of 2,700 expert-sampled states (300 frames from each of 9 .mot files).
+    *   **Subject Scaling**: Poses are scaled to subject-specific heights (TF01: 0.903, TF11: 0.985) and include kinematic offsets (-6°/+2° ankle, -1° pelvis list).
+    *   **Dynamic Reset**: Episodes start with expert finite-difference velocities (including treadmill offsets). The forward position (`pelvis_tx`) is zeroed at each reset.
 *   **Observation Space (46D per frame)**:
     * Task Observations (Shared with discriminator):
         *   **Joint Angles (10D)**: Hip flexion/adduction/rotation, Knee flexion, Ankle (Biological & Prosthetic).
@@ -33,7 +35,9 @@ The system uses **Generative Adversarial Imitation Learning (GAIL)** combined wi
 
 ### C. Agent: `AgentGAIL`
 *   **Actor-Critic**: MLP networks trained via PPO for policy optimization.
-*   **Discriminator**: MLP network trained to distinguish between "Expert" and "Agent" observations.
+*   **Discriminator (WGAN-GP)**: An MLP that learns a Wasserstein distance metric to distinguish between expert and agent observations. 
+    *   **Gradient Penalty**: Enforces 1-Lipschitz continuity for training stability.
+    *   **EMA Reward**: The raw critic output is normalized via an Exponential Moving Average (EMA) to provide a stable imitation reward $R_{gail}$ in the range $[0, 1]$.
 *   **Normalization**: A shared running normalizer ensures expert and agent states are statistically consistent ($z = (x - \mu)/\sigma$). For the observations that are common between the discriminator and the PPO agent, the normalisation mean and std are fixed to the range that is seen in the expert data. 
 
 ## 3. Reward Structure
@@ -43,8 +47,8 @@ $$R_{total} = w_{im} \cdot R_{gail} + 0.2 \cdot R_{dist} + 0.3 \cdot R_{upright}
 
 ### Components:
 1.  **GAIL Imitation ($R_{gail}$)**: 
-    $$R_{gail} = -\log(1 - D(s, a))$$
-    *Where $D$ is the discriminator output probability. Clamped to $[0.0, 2.0]$. Starting at Epoch 3000.*
+    $$R_{gail} = \text{EMA\_Norm}(\text{Critic}(s, a))$$
+    *Where Critic is the WGAN output. Mapped to approximately $[0, 1]$.*
 
 2.  **Distance Progress ($R_{dist}$)**: 
     $$R_{dist} = x_{pelvis} - x_{start}$$
@@ -67,10 +71,10 @@ $$R_{total} = w_{im} \cdot R_{gail} + 0.2 \cdot R_{dist} + 0.3 \cdot R_{upright}
     *Counts features exceeding 5 standard deviations of the expert distribution.*
 
 ## 4. Training Hyperparameters:
-*   **Schedule** GAIL Start Epoch: 3000. The discriminator training starts after 3000 epochs, and the rewards from the discriminator are only added after this epoch.
+*   **Schedule** GAIL Start Epoch: 3000.
 *   **Learning Rates** Policy LR: $5.0 \times 10^{-5}$, Value LR: $3.0 \times 10^{-4}$, GAIL LR: $2.0 \times 10^{-5}$ 
-*   **Optimization** Policy Updates/Epoch: 10, Discrim Updates/Epoch: 2
-*   **Batching** Rollout Batch Size: 8192, Discrim Batch Size: 512
+*   **Optimization** Policy Updates/Epoch: 10, Discrim Updates/Epoch: 10
+*   **Batching** Rollout Batch Size: 8192, Discrim Batch Size: 4096
 
 ## 5. Network Architectures
 
