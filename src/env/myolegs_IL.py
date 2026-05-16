@@ -54,6 +54,8 @@ class MyoLegsGAIL(MyoLegsGailTask):
         self.cfg = cfg
         self.dtype = np.float32
         
+        self.obs_tracking_reference = self.cfg.env.get("obs_tracking_reference", True)
+        
         self.initialize_env_params(cfg)
         self.initialize_run_params(cfg)
         
@@ -180,8 +182,12 @@ class MyoLegsGAIL(MyoLegsGailTask):
         self._tracking_subject       = None
         self._tracking_elapsed       = 0.0
         self._tracking_last_ref_time = -np.inf
-        self._q_hat                  = None
-        self._qdot_hat               = None
+        
+        # Initialise reference states as zeros for consistent observation sizing
+        num_joints = len(self.obs_qpos_idx)
+        self._q_hat                  = np.zeros(num_joints, dtype=self.dtype)
+        self._qdot_hat               = np.zeros(num_joints, dtype=self.dtype)
+        
         # joint-only velocity indices — obs_qvel_idx[3:] drops the 3 pelvis linear vels
         self._track_qvel_idx         = self.obs_qvel_idx[3:]
 
@@ -201,6 +207,31 @@ class MyoLegsGAIL(MyoLegsGailTask):
         
         # 3. Root Height is removed from discriminator state
         return np.concatenate([angles, vels])
+
+    def compute_proprioception(self) -> np.ndarray:
+        """
+        Overrides base proprioception to optionally include tracking references.
+        """
+        # Lazy initialization for early calls during base class __init__
+        if not hasattr(self, "obs_qpos_idx"):
+            self._setup_obs_mapping()
+            num_joints = len(self.obs_qpos_idx)
+            self._q_hat = np.zeros(num_joints, dtype=self.dtype)
+            self._qdot_hat = np.zeros(num_joints, dtype=self.dtype)
+            self._track_qvel_idx = self.obs_qvel_idx[3:]
+
+        # Call base implementation to get standard features (target_speed, activations, contacts)
+        from src.env.myolegs_gail_env import MyoLegsGailEnv
+        prop_array = MyoLegsGailEnv.compute_proprioception(self)
+        
+        if self.obs_tracking_reference:
+            # Append references to the end of proprioception
+            # Update self.proprioception dict to include these for get_self_obs_size() consistency
+            self.proprioception["q_hat"] = self._q_hat
+            self.proprioception["qdot_hat"] = self._qdot_hat
+            return np.concatenate([prop_array, self._q_hat, self._qdot_hat])
+        
+        return prop_array
 
     def compute_task_obs(self) -> np.ndarray:
         """Returns the concatenated temporal history of disc observations."""
@@ -265,8 +296,11 @@ class MyoLegsGAIL(MyoLegsGailTask):
             # Reset tracking clock
             self._tracking_elapsed       = 0.0
             self._tracking_last_ref_time = -np.inf
-            self._q_hat                  = None
-            self._qdot_hat               = None
+            
+            # Reset references to zeros (never None, for observation consistency)
+            num_joints = len(self.obs_qpos_idx)
+            self._q_hat = np.zeros(num_joints, dtype=self.dtype)
+            self._qdot_hat = np.zeros(num_joints, dtype=self.dtype)
         else:
             # Fallback: use 'stand' keyframe
             stand_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_KEY, 'stand')

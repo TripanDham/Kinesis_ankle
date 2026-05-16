@@ -95,8 +95,9 @@ class AgentGAIL(AgentHumanoid):
         to_train(self.env.gail_disc)
         metrics = {"loss_disc": [], "wasserstein_dist": [], "gradient_penalty": []}
         
-        # Move discriminator to GPU for training
+        # Move discriminator and its optimizer state to GPU for training
         self.env.gail_disc.to(self.device)
+        self._move_optimizer_to_device(self.env.optim_disc, self.device)
         
         for _ in range(self.epoch_disc):
             # Sample from agent's batch
@@ -154,8 +155,16 @@ class AgentGAIL(AgentHumanoid):
             
         # Move back to CPU for sampling workers
         self.env.gail_disc.to("cpu")
+        self._move_optimizer_to_device(self.env.optim_disc, "cpu")
         
         return {k: np.mean(v) for k, v in metrics.items()}
+
+    def _move_optimizer_to_device(self, optimizer, device):
+        """Moves all optimizer state tensors to the specified device."""
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if isinstance(v, torch.Tensor):
+                    state[k] = v.to(device)
     def eval_policy(self, runs: int = 10, dump: bool = False) -> dict:
         """
         Extended evaluation that computes and visualizes discriminator saliency.
@@ -171,6 +180,7 @@ class AgentGAIL(AgentHumanoid):
             feature_names.extend([n + suffix for n in base_names])
 
         all_saliency = []
+        first_motion_key = None  # captured from first episode reset
         
         # 2. Run Evaluation with Gradients Enabled for Saliency
         with to_test(*self.sample_modules):
@@ -185,6 +195,10 @@ class AgentGAIL(AgentHumanoid):
                 for i in range(runs):
                     obs_dict, info = self.env.reset()
                     state = self.preprocess_obs(obs_dict)
+                    
+                    # Capture the motion key synced by RSI on first episode
+                    if i == 0 and self.env._tracking_motion_key is not None:
+                        first_motion_key = self.env._tracking_motion_key
                     
                     episode_saliency = []
                     
@@ -239,8 +253,15 @@ class AgentGAIL(AgentHumanoid):
                     from src.utils.biomechanics_plotter import plot_discriminator_saliency
                     # Plot the first episode's saliency map
                     plot_discriminator_saliency(all_saliency[0], feature_names)
+                
+                # 4. Reference trajectory plot (once per eval)
+                if first_motion_key is not None:
+                    from src.utils.biomechanics_plotter import plot_reference_trajectory
+                    epoch = getattr(self, 'epoch', 0)
+                    ref_plot_path = f"reference_trajectory_ep{epoch:05d}_{first_motion_key}.html"
+                    plot_reference_trajectory(self.env, first_motion_key, output_path=ref_plot_path)
         
-        # 4. Cleanup: Move discriminator back to CPU for sampling worker compatibility
+        # 5. Cleanup: Move discriminator back to CPU for sampling worker compatibility
         self.env.gail_disc.to("cpu")
         
         # Run standard evaluation for biomechanics plots
@@ -268,6 +289,7 @@ class AgentGAIL(AgentHumanoid):
         
         if "optimizer_discriminator" in state:
             self.env.optim_disc.load_state_dict(state["optimizer_discriminator"])
+            self._move_optimizer_to_device(self.env.optim_disc, self.device)
             logger.info("Loaded GAIL discriminator optimizer state.")
             
         # Restore WGAN-GP reward normalization stats

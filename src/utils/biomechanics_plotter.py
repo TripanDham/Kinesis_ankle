@@ -326,3 +326,113 @@ def plot_discriminator_saliency(saliency_data, feature_names, output_path="discr
     fig.update_layout(height=1200, width=1500, template='plotly_dark')
     fig.write_html(output_path)
     logger.info(f"Discriminator saliency dashboard saved to: {output_path}")
+
+
+def plot_reference_trajectory(env, motion_key: str, output_path: str = "reference_trajectory.html"):
+    """
+    Queries ProstWalkCore.get_reference_state across the full motion duration and plots
+    all 10 joint angles (q_hat) and velocities (qdot_hat) in an interactive Plotly dashboard.
+
+    Args:
+        env:         A MyoLegsGAIL instance with motion_lib and tracking metadata loaded.
+        motion_key:  Motion to visualise (e.g. 'tf01_0p6_01_rotated_ik').
+        output_path: Where to write the HTML file.
+    """
+    joint_names = [
+        "hip_flexion_r", "hip_adduction_r", "hip_rotation_r", "knee_angle_r", "ankle_r",
+        "hip_flexion_l", "hip_adduction_l", "hip_rotation_l", "knee_angle_l", "ankle_l",
+    ]
+    n_joints = len(joint_names)
+    right_color = "#00BFFF"   # blue for right
+    left_color  = "#FF6B6B"   # red for left
+
+    # Determine subject from motion key
+    subject_id = "tf01" if "tf01" in motion_key else \
+                 "tf11" if "tf11" in motion_key else \
+                 "tf08" if "tf08" in motion_key else None
+    subj_settings = env._subject_correction_map.get(subject_id) if subject_id else None
+
+    # Determine motion duration (clamp to full motion length)
+    motion_data = env.motion_lib.motion_data.get(motion_key)
+    if motion_data is None:
+        logger.warning(f"plot_reference_trajectory: motion '{motion_key}' not found in motion_lib.")
+        return
+    fps = float(motion_data.get("fps", 200))
+    n_frames = len(motion_data.get("qpos", []))
+    duration = n_frames / fps
+
+    dt = 1.0 / fps
+    times = np.arange(0.0, duration, dt)
+
+    q_traj    = []
+    qdot_traj = []
+
+    for t in times:
+        ref = env.motion_lib.get_reference_state(
+            motion_key=motion_key,
+            t_start=0.0,
+            elapsed=t,
+            joint_qpos_idx=env.obs_qpos_idx,
+            joint_qvel_idx=env._track_qvel_idx,
+            subject_settings=subj_settings,
+        )
+        q_traj.append(ref["q_hat"])
+        qdot_traj.append(ref["qdot_hat"])
+
+    q_traj    = np.array(q_traj)      # (T, 10)
+    qdot_traj = np.array(qdot_traj)   # (T, 10)
+
+    # --- Build Plotly Figure ---
+    # Layout: 10 rows × 2 cols  (col1 = angle, col2 = velocity)
+    subplot_titles = []
+    for j in joint_names:
+        subplot_titles += [f"{j} — angle (rad)", f"{j} — vel (rad/s)"]
+
+    fig = make_subplots(
+        rows=n_joints, cols=2,
+        subplot_titles=subplot_titles,
+        shared_xaxes=True,
+        vertical_spacing=0.025,
+        horizontal_spacing=0.08,
+    )
+
+    for i, name in enumerate(joint_names):
+        row = i + 1
+        color = right_color if i < 5 else left_color
+
+        # Angle
+        fig.add_trace(
+            go.Scatter(x=times, y=q_traj[:, i], mode="lines",
+                       line=dict(color=color, width=1.5),
+                       name=f"{name} angle", showlegend=False),
+            row=row, col=1,
+        )
+        # Velocity
+        fig.add_trace(
+            go.Scatter(x=times, y=qdot_traj[:, i], mode="lines",
+                       line=dict(color=color, width=1.5, dash="dot"),
+                       name=f"{name} vel", showlegend=False),
+            row=row, col=2,
+        )
+
+    # Legend proxies
+    fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines",
+                             line=dict(color=right_color), name="Right leg"))
+    fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines",
+                             line=dict(color=left_color), name="Left leg"))
+
+    fig.update_layout(
+        height=280 * n_joints,
+        width=1600,
+        title_text=f"Reference Trajectory — {motion_key}  (subject: {subject_id or 'unknown'})",
+        template="plotly_dark",
+        legend=dict(orientation="h", y=1.01, x=0),
+        font=dict(size=11),
+    )
+
+    # X-axis labels only on bottom row
+    for col in (1, 2):
+        fig.update_xaxes(title_text="Time (s)", row=n_joints, col=col)
+
+    fig.write_html(output_path)
+    logger.info(f"Reference trajectory plot saved to: {output_path}")
