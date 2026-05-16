@@ -39,7 +39,7 @@ fixed_ankle_target: 0.0
 
 # Motion tracking reward
 tracking_interval: 0.1       # seconds between reference fetches (10 Hz default)
-w_track_pos: 2.0             # weight on joint angle error  (w1)
-w_track_vel: 0.1             # weight on joint velocity error (w2)
+w_track_pos: 10.0             # weight on joint angle error  (w1)
+w_track_vel: 1.0              # weight on joint velocity error (w2)
 tracking_reward_weight: 1.0  # overall scale on R_track in total reward
 obs_tracking_reference: true # include q_hat, qvel_hat in proprioception (visible to policy)

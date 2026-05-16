@@ -177,12 +177,10 @@ class MyoLegsGAIL(MyoLegsGailTask):
         self.w_track            = self.cfg.env.get('tracking_reward_weight', 1.0)
 
         # Tracking runtime state (reset each episode in init_myolegs)
-        self._tracking_motion_key    = None
-        self._tracking_t_start       = 0.0
-        self._tracking_subject       = None
-        self._tracking_elapsed       = 0.0
-        self._tracking_last_ref_time = -np.inf
-        
+        self._tracking_motion_key = None
+        self._tracking_t_start    = 0.0
+        self._tracking_subject    = None
+        self._tracking_elapsed    = 0.0
         # Initialise reference states as zeros for consistent observation sizing
         num_joints = len(self.obs_qpos_idx)
         self._q_hat                  = np.zeros(num_joints, dtype=self.dtype)
@@ -294,8 +292,7 @@ class MyoLegsGAIL(MyoLegsGailTask):
                 self._tracking_motion_key = None
 
             # Reset tracking clock
-            self._tracking_elapsed       = 0.0
-            self._tracking_last_ref_time = -np.inf
+            self._tracking_elapsed = 0.0
             
             # Reset references to zeros (never None, for observation consistency)
             num_joints = len(self.obs_qpos_idx)
@@ -411,10 +408,9 @@ class MyoLegsGAIL(MyoLegsGailTask):
             im_reward = np.clip((im_reward_raw - self._reward_mean) / reward_std, -1.0, 1.0)
             im_reward = (im_reward + 1.0) / 2.0  # Map [-1, 1] -> [0, 1]
 
-        # Advance tracking clock and fetch reference if interval has elapsed
+        # Advance tracking clock and fetch reference every control step (30 Hz)
         self._tracking_elapsed += self._sim_dt
-        if (self._tracking_motion_key is not None and
-                self._tracking_elapsed - self._tracking_last_ref_time >= self._tracking_interval):
+        if self._tracking_motion_key is not None:
             try:
                 ref = self.motion_lib.get_reference_state(
                     motion_key       = self._tracking_motion_key,
@@ -428,7 +424,6 @@ class MyoLegsGAIL(MyoLegsGailTask):
                 self._qdot_hat = ref['qdot_hat']
             except KeyError:
                 pass  # motion_key not yet loaded — silently skip
-            self._tracking_last_ref_time = self._tracking_elapsed
             
         vel_reward = self.compute_velocity_reward()
         upright_reward = self.compute_upright_reward()
@@ -465,14 +460,14 @@ class MyoLegsGAIL(MyoLegsGailTask):
 
         tracking_reward = self.compute_tracking_reward()
 
-        reward = (im_reward + 
+        reward = (0.0 * im_reward + 
                   0.2 * vel_reward + 
                   0.3 * upright_reward +
-                  self.w_track * tracking_reward -
+                  1.0 * tracking_reward -
                   0.01 * muscle_effort - 
                   0.05 * motor_effort -
                   0 * ankle_delta_penalty -
-                  0.01 * state_oob_penalty)
+                  0.0 * state_oob_penalty)
         
         self.reward_info = {
             "imitation_reward_gail": im_reward, 
