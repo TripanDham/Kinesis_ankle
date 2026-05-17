@@ -94,26 +94,31 @@ class MyoLegsGAIL(MyoLegsGailTask):
         self.expert_motion_id = None
 
     def _setup_obs_mapping(self):
-        """Pre-calculates qpos/qvel indices for the 30D observation vector."""
-        # 1. Angles (13D)
-        # Root (0D) - Pelvis tilt, list, rot removed
-        root_angle_names = []
-        # Right Leg (5): hip (3), knee (1), ankle (1)
+        """Pre-calculates qpos/qvel indices for the observation and tracking vectors."""
+        # ── GAIL discriminator / observation joint indices (no pelvis) ──────────
         right_leg_names = ["hip_flexion_r", "hip_adduction_r", "hip_rotation_r", "knee_angle_r", "osl_ankle_angle_r"]
-        # Left Leg (5): hip (3), knee (1), ankle (1)
-        left_leg_names = ["hip_flexion_l", "hip_adduction_l", "hip_rotation_l", "knee_angle_l", "ankle_angle_l"]
-        
-        angle_names = root_angle_names + right_leg_names + left_leg_names
+        left_leg_names  = ["hip_flexion_l", "hip_adduction_l", "hip_rotation_l", "knee_angle_l", "ankle_angle_l"]
+        angle_names     = right_leg_names + left_leg_names
         self.obs_qpos_idx = [self.mj_model.joint(n).qposadr[0] for n in angle_names]
-        
-        # 2. Velocities (16D)
-        # Root (3): lin (3) - Angular (tilt, list, rotation) removed
-        root_vel_names = ["pelvis_tx", "pelvis_ty", "pelvis_tz"]
-        # Right/Left joint velocities
-        vel_names = root_vel_names + right_leg_names + left_leg_names
+
+        root_vel_names   = ["pelvis_tx", "pelvis_ty", "pelvis_tz"]
+        vel_names        = root_vel_names + right_leg_names + left_leg_names
         self.obs_qvel_idx = [self.mj_model.joint(n).dofadr[0] for n in vel_names]
-        
-        logger.info(f"Observation mapping initialized for 24D vector.")
+
+        # ── Extended tracking indices (full pelvis + joints) ──────────────────
+        pelvis_rot_names = ["pelvis_tilt", "pelvis_list", "pelvis_rotation"]
+        track_pos_names  = ["pelvis_tx", "pelvis_ty", "pelvis_tz"] + pelvis_rot_names + angle_names
+        self._track_qpos_idx = [self.mj_model.joint(n).qposadr[0] for n in track_pos_names]
+
+        # Velocities: pelvis linear (tx,ty,tz) + pelvis angular + joints
+        pelvis_ang_names = ["pelvis_tilt", "pelvis_list", "pelvis_rotation"]
+        track_vel_names  = root_vel_names + pelvis_ang_names + right_leg_names + left_leg_names
+        self._track_qvel_idx = [self.mj_model.joint(n).dofadr[0] for n in track_vel_names]
+
+        logger.info(
+            f"Observation mapping: disc={len(self.obs_qpos_idx)}D pos / {len(self.obs_qvel_idx)}D vel  |  "
+            f"tracking={len(self._track_qpos_idx)}D pos / {len(self._track_qvel_idx)}D vel"
+        )
 
     def setup_motionlib(self):
         """Initializes the motion library using ProstWalkCore."""
@@ -181,13 +186,9 @@ class MyoLegsGAIL(MyoLegsGailTask):
         self._tracking_t_start    = 0.0
         self._tracking_subject    = None
         self._tracking_elapsed    = 0.0
-        # Initialise reference states as zeros for consistent observation sizing
-        num_joints = len(self.obs_qpos_idx)
-        self._q_hat                  = np.zeros(num_joints, dtype=self.dtype)
-        self._qdot_hat               = np.zeros(num_joints, dtype=self.dtype)
-        
-        # joint-only velocity indices — obs_qvel_idx[3:] drops the 3 pelvis linear vels
-        self._track_qvel_idx         = self.obs_qvel_idx[3:]
+        # Initialise reference states as zeros (sized to full tracking DOF set)
+        self._q_hat    = np.zeros(len(self._track_qpos_idx), dtype=self.dtype)
+        self._qdot_hat = np.zeros(len(self._track_qvel_idx), dtype=self.dtype)
 
 
     def get_disc_obs(self) -> np.ndarray:
@@ -214,9 +215,8 @@ class MyoLegsGAIL(MyoLegsGailTask):
         if not hasattr(self, "obs_qpos_idx"):
             self._setup_obs_mapping()
             num_joints = len(self.obs_qpos_idx)
-            self._q_hat = np.zeros(num_joints, dtype=self.dtype)
-            self._qdot_hat = np.zeros(num_joints, dtype=self.dtype)
-            self._track_qvel_idx = self.obs_qvel_idx[3:]
+            self._q_hat    = np.zeros(len(self._track_qpos_idx), dtype=self.dtype)
+            self._qdot_hat = np.zeros(len(self._track_qvel_idx), dtype=self.dtype)
 
         # Call base implementation to get standard features (target_speed, activations, contacts)
         from src.env.myolegs_gail_env import MyoLegsGailEnv
@@ -294,10 +294,9 @@ class MyoLegsGAIL(MyoLegsGailTask):
             # Reset tracking clock
             self._tracking_elapsed = 0.0
             
-            # Reset references to zeros (never None, for observation consistency)
-            num_joints = len(self.obs_qpos_idx)
-            self._q_hat = np.zeros(num_joints, dtype=self.dtype)
-            self._qdot_hat = np.zeros(num_joints, dtype=self.dtype)
+            # Reset references to zeros (sized to full tracking DOF set)
+            self._q_hat    = np.zeros(len(self._track_qpos_idx), dtype=self.dtype)
+            self._qdot_hat = np.zeros(len(self._track_qvel_idx), dtype=self.dtype)
         else:
             # Fallback: use 'stand' keyframe
             stand_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_KEY, 'stand')
@@ -416,7 +415,7 @@ class MyoLegsGAIL(MyoLegsGailTask):
                     motion_key       = self._tracking_motion_key,
                     t_start          = self._tracking_t_start,
                     elapsed          = self._tracking_elapsed,
-                    joint_qpos_idx   = self.obs_qpos_idx,
+                    joint_qpos_idx   = self._track_qpos_idx,
                     joint_qvel_idx   = self._track_qvel_idx,
                     subject_settings = self._tracking_subject,
                 )
@@ -458,12 +457,12 @@ class MyoLegsGAIL(MyoLegsGailTask):
         
         w_state_oob = self.cfg.env.reward_specs.get("w_state_oob", 0.1)
 
-        tracking_reward = self.compute_tracking_reward()
+        tracking_pos_reward, tracking_vel_reward = self.compute_tracking_reward()
 
         reward = (0.0 * im_reward + 
-                  0.2 * vel_reward + 
                   0.3 * upright_reward +
-                  1.0 * tracking_reward -
+                  self.w_track_pos * tracking_pos_reward +
+                  self.w_track_vel * tracking_vel_reward -
                   0.01 * muscle_effort - 
                   0.05 * motor_effort -
                   0 * ankle_delta_penalty -
@@ -471,9 +470,9 @@ class MyoLegsGAIL(MyoLegsGailTask):
         
         self.reward_info = {
             "imitation_reward_gail": im_reward, 
-            "velocity_reward": vel_reward,
             "upright_reward": upright_reward,
-            "tracking_reward": tracking_reward,
+            "tracking_pos_reward": tracking_pos_reward,
+            "tracking_vel_reward": tracking_vel_reward,
             "muscle_effort": muscle_effort,
             "motor_effort": motor_effort,
             "ankle_delta_penalty": ankle_delta_penalty,
@@ -522,22 +521,29 @@ class MyoLegsGAIL(MyoLegsGailTask):
         upright_reward = np.exp(-3 * (fall_forward ** 2 + fall_sideways ** 2))
         return upright_reward
 
-    def compute_tracking_reward(self) -> float:
+    def compute_tracking_reward(self) -> Tuple[float, float]:
         """
-        Computes R_track = exp(-w1*||q - q_hat||^2 - w2*||qdot - qdot_hat||^2)
-        for joints only (no pelvis translation/rotation).
-        Returns 0.0 if the reference has not been fetched yet.
+        Computes separate position and velocity tracking rewards over the full
+        extended DOF set (pelvis_ty, pelvis rotations, all joints):
+
+            R_pos = exp( -w_track_pos * ||q[_track_qpos_idx] - q_hat||^2 )
+            R_vel = exp( -w_track_vel * ||qdot[_track_qvel_idx] - qdot_hat||^2 )
+
+        Subject-specific corrections (height_scale, pelvis offsets, ankle offset)
+        are applied inside get_reference_state before q_hat/qdot_hat are set,
+        so no additional correction is needed here.
+
+        Returns (R_pos, R_vel), each in [0, 1]. Returns (0, 0) if no reference.
         """
         if self._q_hat is None or self._qdot_hat is None:
-            return 0.0
-        q    = self.mj_data.qpos[self.obs_qpos_idx]    # joint angles (10D)
-        qdot = self.mj_data.qvel[self._track_qvel_idx] # joint vels (10D, no pelvis)
+            return 0.0, 0.0
+        q    = self.mj_data.qpos[self._track_qpos_idx]
+        qdot = self.mj_data.qvel[self._track_qvel_idx]
         dq   = q    - self._q_hat
         dqd  = qdot - self._qdot_hat
-        return float(np.exp(
-            -self.w_track_pos * float(dq  @ dq) 
-            -self.w_track_vel * float(dqd @ dqd)
-        ))
+        r_pos = float(np.exp(-self.w_track_pos * float(dq  @ dq)))
+        r_vel = float(np.exp(-self.w_track_vel * float(dqd @ dqd)))
+        return r_pos, r_vel
 
     def compute_reset(self) -> Tuple[bool, bool]:
         """Basic stability and time-based reset."""

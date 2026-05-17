@@ -37,9 +37,10 @@ fixed_ankle_stiffness: 200.0
 fixed_ankle_damping: 5.0
 fixed_ankle_target: 0.0
 
-# Motion tracking reward
-tracking_interval: 0.1       # seconds between reference fetches (10 Hz default)
-w_track_pos: 10.0             # weight on joint angle error  (w1)
-w_track_vel: 1.0              # weight on joint velocity error (w2)
-tracking_reward_weight: 1.0  # overall scale on R_track in total reward
+# Motion tracking reward (separate position and velocity terms)
+# w_track_pos: multiplier on R_pos = exp(-||q - q_hat||^2)        ← [0,1] each
+# w_track_vel: multiplier on R_vel = exp(-||qdot - qdot_hat||^2)  ← [0,1] each
+tracking_interval: 0.1       # kept for reference; reference now updates every step
+w_track_pos: 1.0
+w_track_vel: 0.1
 obs_tracking_reference: true # include q_hat, qvel_hat in proprioception (visible to policy)
