@@ -31,3 +31,6 @@ WARNING: Nan, Inf or huge value in QACC at DOF 28. The simulation is unstable. T
 Sun Apr 19 14:13:12 2026
 WARNING: Nan, Inf or huge value in QACC at DOF 0. The simulation is unstable. Time = 1.3467.
 
+Sat May 23 11:05:00 2026
+WARNING: mju_openResource: unknown file '/media/tripan/Data/DDP/Kinesis_ankle/myoleg26_OSL_KA.xml'
+

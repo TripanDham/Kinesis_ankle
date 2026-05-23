@@ -32,8 +32,18 @@ import random
 random.seed(0)
 from src.utils.torch_utils import to_torch
 from easydict import EasyDict
+import scipy.ndimage as ndimage
 
-# from src.KinesisCore.forward_kinematics import ForwardKinematics
+# ── FK tracking: bodies tracked by the reward and policy observation ──────────
+# Order is fixed — index 0 = pelvis (gets separate weight), indices 1-7 = limbs
+TRACKED_BODY_NAMES = [
+    'pelvis',                           # [0] pelvis — separate weight
+    'femur_r', 'femur_l',               # [1,2] thighs
+    'tibia_r', 'tibia_l',               # [3,4] tibias
+    'calcn_l',                          # [5]   left calcaneus (heel)
+    'toes_l',                           # [6]   left toes (intact foot)
+]
+N_TRACKED_BODIES = len(TRACKED_BODY_NAMES)  # 7
 
 torch.set_num_threads(1)
 
@@ -231,14 +241,60 @@ class ProstWalkCore:
         
         # Combine into qvel-like structure (lin(3), ang(3), joints(N))
         qvel = np.concatenate([lin_vel, ang_vel, joint_vel], axis=1)
-        
+
+        # ── FK body positions and velocities ─────────────────────────────────
+        # Requires self._mj_model to be set (passed in __init__ as mj_model=).
+        body_xpos, body_vel = self._compute_body_fk(qpos, dt)
+
         return {
-            'qpos': qpos.astype(np.float32),
-            'qvel': qvel.astype(np.float32),
-            'fps': fps,
-            'pose_aa': np.zeros((qpos.shape[0], 24, 3)), # Placeholder
+            'qpos':      qpos.astype(np.float32),
+            'qvel':      qvel.astype(np.float32),
+            'fps':       fps,
+            'pose_aa':   np.zeros((qpos.shape[0], 24, 3), dtype=np.float32),
             'trans_orig': pelvis_trans_raw.astype(np.float32),
+            'body_xpos': body_xpos,   # (T, 8, 3)  FK world positions
+            'body_vel':  body_vel,    # (T, 8, 3)  FK world velocities
         }
+
+    def _compute_body_fk(self, qpos: np.ndarray, dt: float):
+        """
+        Run MuJoCo forward kinematics for TRACKED_BODY_NAMES on the given
+        qpos sequence.  Returns body_xpos (T, 8, 3) and body_vel (T, 8, 3).
+
+        Velocities are computed via Gaussian-smoothed finite differences,
+        matching the approach in Kinesis's convert_opensim.py.
+        """
+        if self._mj_model is None:
+            # Return zeros if no MuJoCo model is available (rare fallback)
+            T = qpos.shape[0]
+            return (np.zeros((T, N_TRACKED_BODIES, 3), dtype=np.float32),
+                    np.zeros((T, N_TRACKED_BODIES, 3), dtype=np.float32))
+
+        # Resolve body IDs once
+        body_ids = []
+        for name in TRACKED_BODY_NAMES:
+            bid = mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_BODY, name)
+            if bid < 0:
+                raise ValueError(f"Body '{name}' not found in MuJoCo model")
+            body_ids.append(bid)
+
+        T = qpos.shape[0]
+        mj_data = mujoco.MjData(self._mj_model)
+        xpos_all = np.zeros((T, N_TRACKED_BODIES, 3), dtype=np.float64)
+
+        for t in range(T):
+            mj_data.qpos[:len(qpos[t])] = qpos[t]
+            mujoco.mj_kinematics(self._mj_model, mj_data)
+            for k, bid in enumerate(body_ids):
+                xpos_all[t, k] = mj_data.xpos[bid]
+
+        # Finite-difference velocities (Gaussian smoothed, sigma=2 frames)
+        vel_all = np.zeros_like(xpos_all)
+        vel_all[1:] = (xpos_all[1:] - xpos_all[:-1]) / dt
+        vel_all[0] = vel_all[1]
+        vel_all = ndimage.gaussian_filter1d(vel_all, sigma=2, axis=0, mode='nearest')
+
+        return xpos_all.astype(np.float32), vel_all.astype(np.float32)
 
 
     def _bunch_by_velocity(self) -> dict:
@@ -645,7 +701,28 @@ class ProstWalkCore:
             qpos_ref[subject_settings['ankle_r_qpos_adr']] += subject_settings['ankle_offset_rad']
             qvel_ref[subject_settings['ty_dof_adr']]     *= hs
 
-        return {
+        result = {
             'q_hat':    qpos_ref[joint_qpos_idx],
             'qdot_hat': qvel_ref[joint_qvel_idx],
         }
+
+        # ── FK body references ────────────────────────────────────────────────
+        if 'body_xpos' in data and 'body_vel' in data:
+            bxpos_m = data['body_xpos']  # (T, 8, 3)
+            bvel_m  = data['body_vel']   # (T, 8, 3)
+
+            # Interpolate
+            bxpos_ref = ((1.0 - alpha) * bxpos_m[f0] + alpha * bxpos_m[f1]).copy()
+            bvel_ref  = ((1.0 - alpha) * bvel_m[f0]  + alpha * bvel_m[f1]).copy()
+
+            # Apply height scaling to Z-axis (index 2) of all body positions
+            # This mirrors the pelvis_ty (which moves along Z in MuJoCo) correction in qpos_ref above.
+            if subject_settings is not None:
+                hs = subject_settings['height_scale']
+                bxpos_ref[:, 2] *= hs
+                bvel_ref[:, 2]  *= hs
+
+            result['body_xpos_ref'] = bxpos_ref  # (8, 3)
+            result['body_vel_ref']  = bvel_ref   # (8, 3)
+
+        return result

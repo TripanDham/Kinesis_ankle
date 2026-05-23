@@ -106,18 +106,12 @@ class MyoLegsGAIL(MyoLegsGailTask):
         self.obs_qvel_idx = [self.mj_model.joint(n).dofadr[0] for n in vel_names]
 
         # ── Extended tracking indices (full pelvis + joints) ──────────────────
-        pelvis_rot_names = ["pelvis_tilt", "pelvis_list", "pelvis_rotation"]
-        track_pos_names  = ["pelvis_tx", "pelvis_ty", "pelvis_tz"] + pelvis_rot_names + angle_names
-        self._track_qpos_idx = [self.mj_model.joint(n).qposadr[0] for n in track_pos_names]
-
-        # Velocities: pelvis linear (tx,ty,tz) + pelvis angular + joints
-        pelvis_ang_names = ["pelvis_tilt", "pelvis_list", "pelvis_rotation"]
-        track_vel_names  = root_vel_names + pelvis_ang_names + right_leg_names + left_leg_names
-        self._track_qvel_idx = [self.mj_model.joint(n).dofadr[0] for n in track_vel_names]
+        from src.KinesisCore.prostwalk_core import TRACKED_BODY_NAMES
+        self._track_body_ids = [self.mj_model.body(n).id for n in TRACKED_BODY_NAMES]
 
         logger.info(
             f"Observation mapping: disc={len(self.obs_qpos_idx)}D pos / {len(self.obs_qvel_idx)}D vel  |  "
-            f"tracking={len(self._track_qpos_idx)}D pos / {len(self._track_qvel_idx)}D vel"
+            f"tracking={len(self._track_body_ids)} bodies"
         )
 
     def setup_motionlib(self):
@@ -176,10 +170,10 @@ class MyoLegsGAIL(MyoLegsGailTask):
 
         # Tracking config — inherited from yaml
         self._sim_dt            = self.mj_model.opt.timestep * getattr(self, 'control_freq_inv', 1)
-        self._tracking_interval = self.cfg.env.get('tracking_interval', 0.1)
-        self.w_track_pos        = self.cfg.env.get('w_track_pos', 2.0)
-        self.w_track_vel        = self.cfg.env.get('w_track_vel', 0.1)
-        self.w_track            = self.cfg.env.get('tracking_reward_weight', 1.0)
+        self.w_track_pelvis     = self.cfg.env.get('w_track_pelvis', 2.0)
+        self.w_track_body       = self.cfg.env.get('w_track_body', 1.0)
+        self.w_body_pos         = self.cfg.env.get('w_body_pos', 1.0)
+        self.w_body_vel         = self.cfg.env.get('w_body_vel', 0.3)
 
         # Tracking runtime state (reset each episode in init_myolegs)
         self._tracking_motion_key = None
@@ -187,8 +181,10 @@ class MyoLegsGAIL(MyoLegsGailTask):
         self._tracking_subject    = None
         self._tracking_elapsed    = 0.0
         # Initialise reference states as zeros (sized to full tracking DOF set)
-        self._q_hat    = np.zeros(len(self._track_qpos_idx), dtype=self.dtype)
-        self._qdot_hat = np.zeros(len(self._track_qvel_idx), dtype=self.dtype)
+        self._body_pos_hat = np.zeros(len(self._track_body_ids) * 3, dtype=self.dtype)
+        self._body_vel_hat = np.zeros(len(self._track_body_ids) * 3, dtype=self.dtype)
+        self._prev_body_xpos = None
+
 
 
     def get_disc_obs(self) -> np.ndarray:
@@ -214,20 +210,26 @@ class MyoLegsGAIL(MyoLegsGailTask):
         # Lazy initialization for early calls during base class __init__
         if not hasattr(self, "obs_qpos_idx"):
             self._setup_obs_mapping()
-            num_joints = len(self.obs_qpos_idx)
-            self._q_hat    = np.zeros(len(self._track_qpos_idx), dtype=self.dtype)
-            self._qdot_hat = np.zeros(len(self._track_qvel_idx), dtype=self.dtype)
+            self._body_pos_hat = np.zeros(len(self._track_body_ids) * 3, dtype=self.dtype)
+            self._body_vel_hat = np.zeros(len(self._track_body_ids) * 3, dtype=self.dtype)
 
         # Call base implementation to get standard features (target_speed, activations, contacts)
         from src.env.myolegs_gail_env import MyoLegsGailEnv
         prop_array = MyoLegsGailEnv.compute_proprioception(self)
         
         if self.obs_tracking_reference:
+            # Make reference positions invariant to global X/Y translation for the policy
+            ref_xpos = self._body_pos_hat.reshape(-1, 3).copy()
+            if len(ref_xpos) > 0:
+                ref_pelvis_xy = ref_xpos[0, :2].copy()
+                ref_xpos[:, :2] -= ref_pelvis_xy
+            flat_ref_xpos = ref_xpos.flatten()
+
             # Append references to the end of proprioception
             # Update self.proprioception dict to include these for get_self_obs_size() consistency
-            self.proprioception["q_hat"] = self._q_hat
-            self.proprioception["qdot_hat"] = self._qdot_hat
-            return np.concatenate([prop_array, self._q_hat, self._qdot_hat])
+            self.proprioception["body_pos_hat"] = flat_ref_xpos
+            self.proprioception["body_vel_hat"] = self._body_vel_hat
+            return np.concatenate([prop_array, flat_ref_xpos, self._body_vel_hat])
         
         return prop_array
 
@@ -295,8 +297,9 @@ class MyoLegsGAIL(MyoLegsGailTask):
             self._tracking_elapsed = 0.0
             
             # Reset references to zeros (sized to full tracking DOF set)
-            self._q_hat    = np.zeros(len(self._track_qpos_idx), dtype=self.dtype)
-            self._qdot_hat = np.zeros(len(self._track_qvel_idx), dtype=self.dtype)
+            self._body_pos_hat = np.zeros(len(self._track_body_ids) * 3, dtype=self.dtype)
+            self._body_vel_hat = np.zeros(len(self._track_body_ids) * 3, dtype=self.dtype)
+            self._prev_body_xpos = None
         else:
             # Fallback: use 'stand' keyframe
             stand_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_KEY, 'stand')
@@ -415,12 +418,13 @@ class MyoLegsGAIL(MyoLegsGailTask):
                     motion_key       = self._tracking_motion_key,
                     t_start          = self._tracking_t_start,
                     elapsed          = self._tracking_elapsed,
-                    joint_qpos_idx   = self._track_qpos_idx,
-                    joint_qvel_idx   = self._track_qvel_idx,
+                    joint_qpos_idx   = [], # unused
+                    joint_qvel_idx   = [], # unused
                     subject_settings = self._tracking_subject,
                 )
-                self._q_hat    = ref['q_hat']
-                self._qdot_hat = ref['qdot_hat']
+                if 'body_xpos_ref' in ref and 'body_vel_ref' in ref:
+                    self._body_pos_hat = ref['body_xpos_ref'].flatten().astype(self.dtype)
+                    self._body_vel_hat = ref['body_vel_ref'].flatten().astype(self.dtype)
             except KeyError:
                 pass  # motion_key not yet loaded — silently skip
             
@@ -438,12 +442,6 @@ class MyoLegsGAIL(MyoLegsGailTask):
         w_muscle = self.cfg.env.reward_specs.get("w_energy", 0.01)
         w_motor = self.cfg.env.reward_specs.get("w_motor_effort", 0.1)
 
-        # # Simple Ankle Out-of-Bounds Penalty (-5 if > +/- 20 degrees)
-        # j_ankle = self.mj_model.joint("osl_ankle_angle_r").id
-        # q_ankle = self.mj_data.qpos[self.mj_model.jnt_qposadr[j_ankle]]
-        # limit_rad = 20 * np.pi / 180.0
-        # ankle_limit_penalty = 5.0 if np.abs(q_ankle) > limit_rad else 0.0
-
         # NEW: State-wide Out-of-Bounds Penalty (hardcoded expert stats)
         state_oob_penalty = 0.0
         # We use a fixed 5.0 std threshold for "out-of-bounds"
@@ -457,22 +455,26 @@ class MyoLegsGAIL(MyoLegsGailTask):
         
         w_state_oob = self.cfg.env.reward_specs.get("w_state_oob", 0.1)
 
-        tracking_pos_reward, tracking_vel_reward = self.compute_tracking_reward()
+        body_pos_reward, body_vel_reward = self.compute_body_tracking_reward()
+        vel_reward = self.compute_velocity_reward()
 
-        reward = (0.0 * im_reward + 
+        w_vel = self.cfg.env.get('w_vel_reward', 0.3)
+        reward = (0.0 * im_reward +
+                  w_vel * vel_reward +
                   0.3 * upright_reward +
-                  self.w_track_pos * tracking_pos_reward +
-                  self.w_track_vel * tracking_vel_reward -
-                  0.01 * muscle_effort - 
+                  self.w_body_pos * body_pos_reward +
+                  self.w_body_vel * body_vel_reward -
+                  0.01 * muscle_effort -
                   0.05 * motor_effort -
                   0 * ankle_delta_penalty -
                   0.0 * state_oob_penalty)
         
         self.reward_info = {
-            "imitation_reward_gail": im_reward, 
+            "imitation_reward_gail": im_reward,
+            "velocity_reward": vel_reward,
             "upright_reward": upright_reward,
-            "tracking_pos_reward": tracking_pos_reward,
-            "tracking_vel_reward": tracking_vel_reward,
+            "body_pos_reward": body_pos_reward,
+            "body_vel_reward": body_vel_reward,
             "muscle_effort": muscle_effort,
             "motor_effort": motor_effort,
             "ankle_delta_penalty": ankle_delta_penalty,
@@ -521,29 +523,51 @@ class MyoLegsGAIL(MyoLegsGailTask):
         upright_reward = np.exp(-3 * (fall_forward ** 2 + fall_sideways ** 2))
         return upright_reward
 
-    def compute_tracking_reward(self) -> Tuple[float, float]:
+    def compute_body_tracking_reward(self) -> Tuple[float, float]:
         """
-        Computes separate position and velocity tracking rewards over the full
-        extended DOF set (pelvis_ty, pelvis rotations, all joints):
+        Computes separate position and velocity tracking rewards using 
+        MuJoCo FK body segment positions:
 
-            R_pos = exp( -w_track_pos * ||q[_track_qpos_idx] - q_hat||^2 )
-            R_vel = exp( -w_track_vel * ||qdot[_track_qvel_idx] - qdot_hat||^2 )
-
-        Subject-specific corrections (height_scale, pelvis offsets, ankle offset)
-        are applied inside get_reference_state before q_hat/qdot_hat are set,
-        so no additional correction is needed here.
-
+        Separate weights for pelvis (index 0) and the rest of the body.
         Returns (R_pos, R_vel), each in [0, 1]. Returns (0, 0) if no reference.
         """
-        if self._q_hat is None or self._qdot_hat is None:
+        if self._body_pos_hat is None or self._body_vel_hat is None or np.all(self._body_pos_hat == 0):
             return 0.0, 0.0
-        q    = self.mj_data.qpos[self._track_qpos_idx]
-        qdot = self.mj_data.qvel[self._track_qvel_idx]
-        dq   = q    - self._q_hat
-        dqd  = qdot - self._qdot_hat
-        r_pos = float(np.exp(-self.w_track_pos * float(dq  @ dq)))
-        r_vel = float(np.exp(-self.w_track_vel * float(dqd @ dqd)))
-        return r_pos, r_vel
+
+        ref_xpos = self._body_pos_hat.reshape(-1, 3).copy() # (7, 3)
+        ref_vel = self._body_vel_hat.reshape(-1, 3) # (7, 3)
+        
+        sim_xpos = self.mj_data.xpos[self._track_body_ids].copy() # (7, 3)
+        
+        # Compute FD velocity (in absolute coordinates)
+        if self._prev_body_xpos is None:
+            sim_vel = np.zeros_like(sim_xpos)
+        else:
+            sim_vel = (sim_xpos - self._prev_body_xpos) / self._sim_dt
+        self._prev_body_xpos = sim_xpos
+
+        # Make position error invariant to absolute X and Y (forward/side) translation
+        # Keep Z (height) absolute.
+        ref_pelvis_xy = ref_xpos[0, :2].copy()
+        ref_xpos[:, :2] -= ref_pelvis_xy
+        
+        sim_pelvis_xy = sim_xpos[0, :2].copy()
+        sim_xpos[:, :2] -= sim_pelvis_xy
+
+        # Pelvis (index 0) gets separate weight. 
+        # Since X and Y are now 0, pel_pos_err is purely height error!
+        pel_pos_err = np.sum((sim_xpos[0] - ref_xpos[0]) ** 2)
+        body_pos_err = np.sum((sim_xpos[1:] - ref_xpos[1:]) ** 2)
+
+        pel_vel_err  = np.sum((sim_vel[0]  - ref_vel[0])  ** 2)
+        body_vel_err = np.sum((sim_vel[1:] - ref_vel[1:]) ** 2)
+
+        pos_reward = (np.exp(-self.w_track_pelvis * pel_pos_err) +
+                      np.exp(-self.w_track_body   * body_pos_err))
+        vel_reward = (np.exp(-self.w_track_pelvis * pel_vel_err) +
+                      np.exp(-self.w_track_body   * body_vel_err))
+
+        return pos_reward / 2.0, vel_reward / 2.0  # normalised to [0,1]
 
     def compute_reset(self) -> Tuple[bool, bool]:
         """Basic stability and time-based reset."""

@@ -37,10 +37,13 @@ fixed_ankle_stiffness: 200.0
 fixed_ankle_damping: 5.0
 fixed_ankle_target: 0.0
 
-# Motion tracking reward (separate position and velocity terms)
-# w_track_pos: multiplier on R_pos = exp(-||q - q_hat||^2)        ← [0,1] each
-# w_track_vel: multiplier on R_vel = exp(-||qdot - qdot_hat||^2)  ← [0,1] each
-tracking_interval: 0.1       # kept for reference; reference now updates every step
-w_track_pos: 1.0
-w_track_vel: 0.1
+# FK body-segment tracking parameters
+w_track_pelvis: 2.0   # Gaussian sharpness for pelvis body error (pos + vel)
+w_track_body: 1.0     # Gaussian sharpness for non-pelvis body error (pos + vel)
+w_body_pos: 1.0       # Multiplier on body_pos_reward in total reward
+w_body_vel: 0.3       # Multiplier on body_vel_reward in total reward
+
+# Forward velocity reward: R_vel = exp(-2*(vx - target)^2), always [0,1]
+# Set to 0 to disable; increase to prioritise forward motion over tracking fidelity
+w_vel_reward: 0.3
 obs_tracking_reference: true # include q_hat, qvel_hat in proprioception (visible to policy)
