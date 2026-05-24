@@ -246,14 +246,22 @@ class ProstWalkCore:
         # Requires self._mj_model to be set (passed in __init__ as mj_model=).
         body_xpos, body_vel = self._compute_body_fk(qpos, dt)
 
+        # Store treadmill speed so get_reference_state can accumulate the
+        # forward displacement into body_xpos_ref at query time.
+        motion_speed = 0.0
+        match_speed = re.search(r'_(\d+p\d+)', os.path.basename(filepath))
+        if match_speed:
+            motion_speed = float(match_speed.group(1).replace('p', '.'))
+
         return {
-            'qpos':      qpos.astype(np.float32),
-            'qvel':      qvel.astype(np.float32),
-            'fps':       fps,
-            'pose_aa':   np.zeros((qpos.shape[0], 24, 3), dtype=np.float32),
-            'trans_orig': pelvis_trans_raw.astype(np.float32),
-            'body_xpos': body_xpos,   # (T, 8, 3)  FK world positions
-            'body_vel':  body_vel,    # (T, 8, 3)  FK world velocities
+            'qpos':        qpos.astype(np.float32),
+            'qvel':        qvel.astype(np.float32),
+            'fps':         fps,
+            'pose_aa':     np.zeros((qpos.shape[0], 24, 3), dtype=np.float32),
+            'trans_orig':  pelvis_trans_raw.astype(np.float32),
+            'body_xpos':   body_xpos,     # (T, 8, 3)  FK world positions (lab frame, no treadmill offset)
+            'body_vel':    body_vel,      # (T, 8, 3)  FK world velocities
+            'motion_speed': motion_speed, # m/s — treadmill speed to accumulate in body_xpos_ref at query time
         }
 
     def _compute_body_fk(self, qpos: np.ndarray, dt: float):
@@ -715,8 +723,19 @@ class ProstWalkCore:
             bxpos_ref = ((1.0 - alpha) * bxpos_m[f0] + alpha * bxpos_m[f1]).copy()
             bvel_ref  = ((1.0 - alpha) * bvel_m[f0]  + alpha * bvel_m[f1]).copy()
 
+            # ── Treadmill offset ──────────────────────────────────────────────
+            # The raw body_xpos FK was run on the .mot pelvis_tx which stays
+            # nearly flat (treadmill trial: subject walks in place).  The true
+            # overground-equivalent forward displacement is:
+            #   X_global(t) = X_lab(t_start + elapsed) + motion_speed * elapsed
+            # We apply only the *elapsed* contribution here so that at elapsed=0
+            # bxpos_ref exactly matches the lab-frame position used to compute
+            # the horizontal alignment offset in the environment.
+            motion_speed = float(data.get('motion_speed', 0.0))
+            bxpos_ref[:, 0] += motion_speed * elapsed  # accumulate forward (X)
+
             # Apply height scaling to Z-axis (index 2) of all body positions
-            # This mirrors the pelvis_ty (which moves along Z in MuJoCo) correction in qpos_ref above.
+            # This mirrors the pelvis_ty (which moves along Z in MuJoCo) correction.
             if subject_settings is not None:
                 hs = subject_settings['height_scale']
                 bxpos_ref[:, 2] *= hs

@@ -1,7 +1,10 @@
-- use architecture overview markdown to explain methods. Stress on the changes made to GAIL architecture, RSI, motor control framework changes. 
+# Report Overview
 
-- in introduction, add some more about the objectives and so on too - that EMG has to match user EMG and all that. Add comparison of GRF also maybe. 
+> **All content has been merged into `architecture_overview.md`.**  
+> Please refer to that file for the full methods description, including reference tracking, RSI, data transformation, velocity computation, and reward formulation.
 
-- plots for rewards - explaining training stages
+## Remaining notes / TODOs
 
-- try to finetune Kinesis and compare the behaviour with it. 
+- In introduction, add more about the objectives — EMG matching, GRF comparison.
+- Add plots for rewards explaining training stages.
+- Try to fine-tune Kinesis and compare behaviour with it.

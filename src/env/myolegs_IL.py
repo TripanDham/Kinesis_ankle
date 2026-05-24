@@ -109,6 +109,19 @@ class MyoLegsGAIL(MyoLegsGailTask):
         from src.KinesisCore.prostwalk_core import TRACKED_BODY_NAMES
         self._track_body_ids = [self.mj_model.body(n).id for n in TRACKED_BODY_NAMES]
 
+        # ── framelinvel sensor addresses (world-frame body velocities) ────────
+        sensor_names = [f"vel_{n}" for n in TRACKED_BODY_NAMES]
+        self._body_linvel_sensor_adr = []
+        import mujoco as _mj
+        for sname in sensor_names:
+            sid = _mj.mj_name2id(self.mj_model, _mj.mjtObj.mjOBJ_SENSOR, sname)
+            if sid < 0:
+                raise RuntimeError(
+                    f"framelinvel sensor '{sname}' not found in model XML. "
+                    "Add <framelinvel> entries for each tracked body."
+                )
+            self._body_linvel_sensor_adr.append(self.mj_model.sensor_adr[sid])
+
         logger.info(
             f"Observation mapping: disc={len(self.obs_qpos_idx)}D pos / {len(self.obs_qvel_idx)}D vel  |  "
             f"tracking={len(self._track_body_ids)} bodies"
@@ -183,7 +196,7 @@ class MyoLegsGAIL(MyoLegsGailTask):
         # Initialise reference states as zeros (sized to full tracking DOF set)
         self._body_pos_hat = np.zeros(len(self._track_body_ids) * 3, dtype=self.dtype)
         self._body_vel_hat = np.zeros(len(self._track_body_ids) * 3, dtype=self.dtype)
-        self._prev_body_xpos = None
+        # Note: _prev_body_xpos removed — velocities now come from framelinvel sensors
 
 
 
@@ -300,6 +313,8 @@ class MyoLegsGAIL(MyoLegsGailTask):
             self._body_pos_hat = np.zeros(len(self._track_body_ids) * 3, dtype=self.dtype)
             self._body_vel_hat = np.zeros(len(self._track_body_ids) * 3, dtype=self.dtype)
             self._prev_body_xpos = None
+            # Cleared here; computed at first step once reference is populated.
+            self._tracking_ref_horizontal_offset = None
         else:
             # Fallback: use 'stand' keyframe
             stand_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_KEY, 'stand')
@@ -425,6 +440,13 @@ class MyoLegsGAIL(MyoLegsGailTask):
                 if 'body_xpos_ref' in ref and 'body_vel_ref' in ref:
                     self._body_pos_hat = ref['body_xpos_ref'].flatten().astype(self.dtype)
                     self._body_vel_hat = ref['body_vel_ref'].flatten().astype(self.dtype)
+                    # Compute horizontal alignment offset once per episode (at first populated step).
+                    # This cancels the arbitrary lab-capture origin so that at t=0 the absolute
+                    # tracking error is zero, while all subsequent steps track in global coordinates.
+                    if self._tracking_ref_horizontal_offset is None:
+                        ref_pelvis_xy = self._body_pos_hat.reshape(-1, 3)[0, :2].copy()
+                        sim_pelvis_xy = self.mj_data.xpos[self._track_body_ids[0], :2].copy()
+                        self._tracking_ref_horizontal_offset = ref_pelvis_xy - sim_pelvis_xy
             except KeyError:
                 pass  # motion_key not yet loaded — silently skip
             
@@ -525,38 +547,40 @@ class MyoLegsGAIL(MyoLegsGailTask):
 
     def compute_body_tracking_reward(self) -> Tuple[float, float]:
         """
-        Computes separate position and velocity tracking rewards using 
-        MuJoCo FK body segment positions:
+        Computes separate position and velocity tracking rewards using
+        MuJoCo FK body segment positions in the absolute global frame.
+
+        A static horizontal alignment offset (computed once per episode at the
+        first step) is subtracted from the reference so that the lab-capture
+        origin is aligned to the simulation origin at t=0.  All subsequent
+        tracking is fully absolute: the agent must match the reference's forward
+        speed, lateral path, and vertical height.
 
         Separate weights for pelvis (index 0) and the rest of the body.
-        Returns (R_pos, R_vel), each in [0, 1]. Returns (0, 0) if no reference.
+        Returns (R_pos, R_vel), each in [0, 1].  Returns (0, 0) if no reference.
         """
-        if self._body_pos_hat is None or self._body_vel_hat is None or np.all(self._body_pos_hat == 0):
+        if (self._body_pos_hat is None
+                or self._body_vel_hat is None
+                or np.all(self._body_pos_hat == 0)
+                or self._tracking_ref_horizontal_offset is None):
             return 0.0, 0.0
 
-        ref_xpos = self._body_pos_hat.reshape(-1, 3).copy() # (7, 3)
-        ref_vel = self._body_vel_hat.reshape(-1, 3) # (7, 3)
-        
-        sim_xpos = self.mj_data.xpos[self._track_body_ids].copy() # (7, 3)
-        
-        # Compute FD velocity (in absolute coordinates)
-        if self._prev_body_xpos is None:
-            sim_vel = np.zeros_like(sim_xpos)
-        else:
-            sim_vel = (sim_xpos - self._prev_body_xpos) / self._sim_dt
-        self._prev_body_xpos = sim_xpos
+        ref_xpos = self._body_pos_hat.reshape(-1, 3).copy()  # (7, 3)
+        ref_vel  = self._body_vel_hat.reshape(-1, 3)          # (7, 3)
 
-        # Make position error invariant to absolute X and Y (forward/side) translation
-        # Keep Z (height) absolute.
-        ref_pelvis_xy = ref_xpos[0, :2].copy()
-        ref_xpos[:, :2] -= ref_pelvis_xy
-        
-        sim_pelvis_xy = sim_xpos[0, :2].copy()
-        sim_xpos[:, :2] -= sim_pelvis_xy
+        sim_xpos = self.mj_data.xpos[self._track_body_ids].copy()  # (7, 3)
 
-        # Pelvis (index 0) gets separate weight. 
-        # Since X and Y are now 0, pel_pos_err is purely height error!
-        pel_pos_err = np.sum((sim_xpos[0] - ref_xpos[0]) ** 2)
+        # Read world-frame linear velocities from framelinvel sensors (no FD needed)
+        sim_vel = np.stack([
+            self.mj_data.sensordata[adr:adr + 3]
+            for adr in self._body_linvel_sensor_adr
+        ])  # (7, 3)
+
+        # Align reference horizontal origin to simulation origin (static per-episode offset).
+        # After this subtraction all three axes are tracked in the absolute global frame.
+        ref_xpos[:, :2] -= self._tracking_ref_horizontal_offset
+
+        pel_pos_err  = np.sum((sim_xpos[0] - ref_xpos[0]) ** 2)
         body_pos_err = np.sum((sim_xpos[1:] - ref_xpos[1:]) ** 2)
 
         pel_vel_err  = np.sum((sim_vel[0]  - ref_vel[0])  ** 2)
@@ -567,18 +591,39 @@ class MyoLegsGAIL(MyoLegsGailTask):
         vel_reward = (np.exp(-self.w_track_pelvis * pel_vel_err) +
                       np.exp(-self.w_track_body   * body_vel_err))
 
-        return pos_reward / 2.0, vel_reward / 2.0  # normalised to [0,1]
+        return pos_reward / 2.0, vel_reward / 2.0  # normalised to [0, 1]
 
     def compute_reset(self) -> Tuple[bool, bool]:
-        """Basic stability and time-based reset."""
-        # Y-up model: pelvis_ty (index 1) is the height
+        """Stability, time-limit, and reference-tracking early-termination reset."""
+        # 1. Pelvis height check (fall detection).
         fell = self.mj_data.qpos[1] < 0.5 or self.mj_data.qpos[1] > 1.2
+
+        # 2. Reference-deviation early termination (absolute global frame).
+        # Mirrors the same aligned-absolute approach used in compute_body_tracking_reward.
+        if (not fell
+                and self.termination_distance
+                and self._body_pos_hat is not None
+                and not np.all(self._body_pos_hat == 0)
+                and self._tracking_ref_horizontal_offset is not None):
+            ref_xpos = self._body_pos_hat.reshape(-1, 3).copy()  # (7, 3)
+            sim_xpos = self.mj_data.xpos[self._track_body_ids].copy()  # (7, 3)
+            # Align reference origin — same static offset as reward computation.
+            ref_xpos[:, :2] -= self._tracking_ref_horizontal_offset
+            # Mean Euclidean distance across all body segments (absolute global).
+            mean_err = float(np.mean(np.linalg.norm(sim_xpos - ref_xpos, axis=-1)))
+            if mean_err > self.termination_distance:
+                fell = True
+
+        # 3. Episode time-limit.
         truncated = self.cur_t >= self.max_episode_length
         return fell, truncated
 
     def initialize_env_params(self, cfg: DictConfig) -> None:
         self.max_episode_length = cfg.env.get("max_episode_length", 300)
         self.muscle_condition = cfg.env.get("muscle_condition", "")
+        # Max mean per-body Cartesian error (pelvis-relative) before early termination.
+        # Set to 0 or None to disable. Exposed in cfg/env/myolegs_gail.yaml.
+        self.termination_distance = cfg.env.get("termination_distance", 0.3)
 
     def initialize_run_params(self, cfg: DictConfig) -> None:
         self.motion_start_idx = cfg.run.motion_id

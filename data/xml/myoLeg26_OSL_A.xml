@@ -444,6 +444,14 @@
 		<jointlimitfrc name="r_ankle_sensor" joint="osl_ankle_angle_r"/>
 		<jointlimitfrc name="l_ankle_sensor" joint="ankle_angle_l"/>
 		<jointlimitfrc name="l_mtp_sensor" joint="mtp_angle_l"/>
+		<!-- World-frame linear velocity sensors for body segment tracking reward -->
+		<framelinvel name="vel_pelvis"  objtype="body" objname="pelvis"/>
+		<framelinvel name="vel_femur_r" objtype="body" objname="femur_r"/>
+		<framelinvel name="vel_femur_l" objtype="body" objname="femur_l"/>
+		<framelinvel name="vel_tibia_r" objtype="body" objname="tibia_r"/>
+		<framelinvel name="vel_tibia_l" objtype="body" objname="tibia_l"/>
+		<framelinvel name="vel_calcn_l" objtype="body" objname="calcn_l"/>
+		<framelinvel name="vel_toes_l"  objtype="body" objname="toes_l"/>
     </sensor>
 	
     <tendon>

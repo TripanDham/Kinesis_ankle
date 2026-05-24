@@ -180,9 +180,15 @@ class AgentGAIL(AgentHumanoid):
             feature_names.extend([n + suffix for n in base_names])
 
         all_saliency = []
+        all_biomechanics = []
         first_motion_key = None  # captured from first episode reset
         
         # 2. Run Evaluation with Gradients Enabled for Saliency
+        plot_saliency = getattr(self.cfg.run, "plot_saliency", True)
+        plot_reference = getattr(self.cfg.run, "plot_reference", True)
+        plot_joint = getattr(self.cfg.run, "plot_joint", True)
+        plot_body = getattr(self.cfg.run, "plot_body", True)
+
         with to_test(*self.sample_modules):
             with to_cpu(*self.sample_modules):
                 # Keep Discriminator on CPU to match policy/normalizer device in this block
@@ -196,11 +202,14 @@ class AgentGAIL(AgentHumanoid):
                     obs_dict, info = self.env.reset()
                     state = self.preprocess_obs(obs_dict)
                     
-                    # Capture the motion key synced by RSI on first episode
-                    if i == 0 and self.env._tracking_motion_key is not None:
-                        first_motion_key = self.env._tracking_motion_key
+                    episode_motion_key = self.env._tracking_motion_key
+                    episode_t_start = self.env._tracking_t_start
                     
                     episode_saliency = []
+                    # Store per‑step biomechanics for this episode
+                    episode_biomech = []
+                    # Store body positions/velocities for body‑tracking plot
+                    episode_body = []
                     
                     # We only collect saliency for the first ~500 steps to keep the heatmap readable
                     for t in range(500): 
@@ -210,62 +219,76 @@ class AgentGAIL(AgentHumanoid):
                                 torch.from_numpy(state).to(self.dtype).to(device), True
                             )[0].numpy()
 
-                        # B. Compute Discriminator Saliency (With Grad)
-                        gail_obs_size = self.env.get_task_obs_size()
-                        gail_state = torch.from_numpy(state[:, :gail_obs_size]).to(self.dtype).to(device)
-                        gail_state.requires_grad = True
-                        
-                        # Normalize state using policy's normalizer (same as training)
-                        self.policy_net.norm.eval()
-                        padded = torch.zeros(1, self.policy_net.norm.dim, device=device, dtype=self.dtype)
-                        padded[:, :gail_obs_size] = gail_state
-                        norm_state = self.policy_net.norm(padded)[:, :gail_obs_size]
-                        
-                        # Forward pass through discriminator
-                        logits = self.env.gail_disc(norm_state)
-                        
-                        # Backward pass to get gradients w.r.t input state
-                        self.env.gail_disc.zero_grad()
-                        logits.backward()
-                        
-                        # Saliency = Magnitude of gradients
-                        saliency = gail_state.grad.abs().squeeze().cpu().numpy()
-                        episode_saliency.append(saliency)
+                        # B. Compute Discriminator Saliency (With Grad if enabled)
+                        if plot_saliency:
+                            gail_obs_size = self.env.get_task_obs_size()
+                            gail_state = torch.from_numpy(state[:, :gail_obs_size]).to(self.dtype).to(device)
+                            gail_state.requires_grad = True
+                            
+                            # Normalize state using policy's normalizer (same as training)
+                            self.policy_net.norm.eval()
+                            padded = torch.zeros(1, self.policy_net.norm.dim, device=device, dtype=self.dtype)
+                            padded[:, :gail_obs_size] = gail_state
+                            norm_state = self.policy_net.norm(padded)[:, :gail_obs_size]
+                            
+                            # Forward pass through discriminator
+                            logits = self.env.gail_disc(norm_state)
+                            
+                            # Backward pass to get gradients w.r.t input state
+                            self.env.gail_disc.zero_grad()
+                            logits.backward()
+                            
+                            # Saliency = Magnitude of gradients
+                            saliency = gail_state.grad.abs().squeeze().cpu().numpy()
+                            episode_saliency.append(saliency)
 
                         # C. Step Environment
                         next_obs, reward, terminated, truncated, info = self.env.step(
                             self.preprocess_actions(actions)
                         )
+                        # Record body positions/velocities for body‑tracking plots (if enabled)
+                        if plot_body:
+                            body_pos = self.env.mj_data.xpos[self.env._track_body_ids].copy()
+                            body_vel = np.stack([
+                                self.env.mj_data.sensordata[adr:adr + 3]
+                                for adr in self.env._body_linvel_sensor_adr
+                            ]).copy()
+                            episode_body.append({"pos": body_pos, "vel": body_vel})
+
                         state = self.preprocess_obs(next_obs)
                         
                         if not self.headless:
                             self.env.render()
                             
                         if terminated or truncated:
+                            logger.info(f"Episode {i} ended at step {t}")
+                            if "biomechanics_data" in info:
+                                episode_biomech = info["biomechanics_data"]
                             break
                     
-                    if episode_saliency:
+                    # Store episode data for later aggregated dashboard (unchanged behavior)
+                    all_biomechanics.append(episode_biomech)
+                    
+                    if plot_body and episode_body and episode_motion_key is not None:
+                        from src.utils.biomechanics_plotter import plot_body_and_reference_episode
+                        plot_body_and_reference_episode(episode_body, self.env, episode_motion_key, episode_t_start, i)
+                    
+                    if plot_saliency and episode_saliency:
                         all_saliency.append(np.array(episode_saliency))
                         logger.info(f"Episode {i} saliency collected ({len(episode_saliency)} steps)")
 
                 # 3. Visualization
-                if all_saliency:
+                if plot_saliency and all_saliency:
                     from src.utils.biomechanics_plotter import plot_discriminator_saliency
                     # Plot the first episode's saliency map
                     plot_discriminator_saliency(all_saliency[0], feature_names)
-                
-                # 4. Reference trajectory plot (once per eval)
-                if first_motion_key is not None:
-                    from src.utils.biomechanics_plotter import plot_reference_trajectory
-                    epoch = getattr(self, 'epoch', 0)
-                    ref_plot_path = f"reference_trajectory_ep{epoch:05d}_{first_motion_key}.html"
-                    plot_reference_trajectory(self.env, first_motion_key, output_path=ref_plot_path)
         
         # 5. Cleanup: Move discriminator back to CPU for sampling worker compatibility
         self.env.gail_disc.to("cpu")
         
         # Run standard evaluation for biomechanics plots
         return super().eval_policy(runs=runs, dump=dump)
+
 
     def get_full_state_weights(self) -> dict:
         """Extends checkpoint saving with GAIL networks and stats."""
